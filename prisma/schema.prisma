@@ -1,0 +1,534 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum LifecycleStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  CANCELLED
+  COMPLETED
+}
+
+enum AttendanceStatus {
+  NOT_STARTED
+  ON_TIME
+  LATE
+  ABSENT
+  APPROVED_LEAVE
+  EARLY_CHECKOUT
+  MISSING_CHECKOUT
+  OUTSIDE_GEOFENCE
+  LOW_ACCURACY
+  PENDING_REVIEW
+  COMPLETED
+}
+
+enum VerificationStatus {
+  VERIFIED
+  OUTSIDE_GEOFENCE
+  LOW_ACCURACY
+  LOCATION_UNAVAILABLE
+  MANAGER_REVIEW
+  MANAGER_OVERRIDE
+}
+
+enum AttendanceEventType {
+  CHECK_IN_ATTEMPT
+  CHECK_IN_SUCCESS
+  CHECK_IN_OUTSIDE_GEOFENCE
+  CHECK_IN_LOW_ACCURACY
+  CHECK_OUT_ATTEMPT
+  CHECK_OUT_SUCCESS
+  MANUAL_CORRECTION
+  MANAGER_OVERRIDE
+}
+
+enum AttendanceAction {
+  CHECK_IN
+  CHECK_OUT
+}
+
+enum CorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PositionHistorySource {
+  MANAGER_ASSIGNED
+  WORKER_REQUEST_APPROVED
+  IMPORT
+}
+
+enum PositionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum RegistrationRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BulkBatchStatus {
+  PREVIEW_GENERATED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum BulkResultStatus {
+  CREATED
+  SKIPPED_CONFLICT
+  SKIPPED_INACTIVE
+  FAILED
+}
+
+model Organization {
+  id String @id @default(cuid())
+  slug String @unique
+  name String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  employees Employee[]
+  positions Position[]
+  positionHistories EmployeePositionHistory[]
+  positionRequests PositionRequest[]
+  registrationRequests RegistrationRequest[]
+  workerGroups WorkerGroup[]
+  workerGroupMembers WorkerGroupMember[]
+  bulkAssignmentBatches BulkAssignmentBatch[]
+  projects Project[]
+  schedules WorkSchedule[]
+  users User[]
+  roles Role[]
+  permissions Permission[]
+  telegramAccounts TelegramAccount[]
+  sites Site[]
+  assignments Assignment[]
+  attendanceRecords AttendanceRecord[]
+  attendanceEvents AttendanceEvent[]
+  attendanceRequests AttendanceRequest[]
+  attendanceCorrections AttendanceCorrection[]
+  auditLogs AuditLog[]
+}
+
+model User {
+  id String @id @default(cuid())
+  organizationId String
+  email String
+  status LifecycleStatus @default(ACTIVE)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  roles UserRole[]
+  requestedBulkBatches BulkAssignmentBatch[]
+  @@unique([organizationId, email])
+}
+
+model Role {
+  id String @id @default(cuid())
+  organizationId String
+  code String
+  name String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  users UserRole[]
+  permissions RolePermission[]
+  @@unique([organizationId, code])
+}
+
+model Permission {
+  id String @id @default(cuid())
+  organizationId String
+  code String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  roles RolePermission[]
+  @@unique([organizationId, code])
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId String
+  permissionId String
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+  @@id([roleId, permissionId])
+}
+
+model Position {
+  id String @id @default(cuid())
+  organizationId String
+  code String
+  name String
+  description String?
+  status LifecycleStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employees Employee[] @relation("EmployeeCurrentPosition")
+  history EmployeePositionHistory[]
+  positionRequests PositionRequest[] @relation("RequestedPosition")
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+}
+
+model EmployeePositionHistory {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String
+  positionId String
+  effectiveFrom DateTime @default(now())
+  effectiveTo DateTime?
+  source PositionHistorySource @default(MANAGER_ASSIGNED)
+  assignedByUserId String?
+  createdAt DateTime @default(now())
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  position Position @relation(fields: [positionId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, employeeId, effectiveFrom])
+  @@index([organizationId, positionId])
+}
+
+model PositionRequest {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String
+  requestedPositionId String
+  requestedAt DateTime @default(now())
+  status PositionRequestStatus @default(PENDING)
+  reviewedAt DateTime?
+  reviewedByUserId String?
+  reviewNote String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  requestedPosition Position @relation("RequestedPosition", fields: [requestedPositionId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, status, requestedAt])
+  @@index([organizationId, employeeId])
+}
+
+model RegistrationRequest {
+  id String @id @default(cuid())
+  organizationId String
+  telegramUserId String
+  phone String
+  normalizedPhone String
+  telegramUsername String?
+  telegramFirstName String?
+  telegramLastName String?
+  telegramPhotoUrl String?
+  status RegistrationRequestStatus @default(PENDING)
+  requestedAt DateTime @default(now())
+  reviewedAt DateTime?
+  reviewedByUserId String?
+  reviewNote String?
+  createdEmployeeId String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, status, requestedAt])
+  @@index([organizationId, normalizedPhone])
+  @@index([organizationId, telegramUserId])
+}
+
+model WorkerGroup {
+  id String @id @default(cuid())
+  organizationId String
+  code String
+  name String
+  description String?
+  status LifecycleStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  members WorkerGroupMember[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+}
+
+model WorkerGroupMember {
+  id String @id @default(cuid())
+  organizationId String
+  workerGroupId String
+  employeeId String
+  joinedAt DateTime @default(now())
+  leftAt DateTime?
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  workerGroup WorkerGroup @relation(fields: [workerGroupId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, workerGroupId, leftAt])
+  @@index([organizationId, employeeId, leftAt])
+}
+
+model BulkAssignmentBatch {
+  id String @id @default(cuid())
+  organizationId String
+  targetSiteId String
+  scheduleId String
+  startsOn DateTime @db.Date
+  endsOn DateTime? @db.Date
+  requestedByUserId String
+  idempotencyKey String?
+  previewId String @unique
+  previewExpiresAt DateTime
+  snapshotWorkerIds Json
+  transferOption Boolean @default(false)
+  status BulkBatchStatus @default(PREVIEW_GENERATED)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  targetSite Site @relation(fields: [targetSiteId], references: [id], onDelete: Restrict)
+  schedule WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  requestedByUser User @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  results BulkAssignmentResult[]
+
+  @@unique([organizationId, requestedByUserId, idempotencyKey])
+  @@index([organizationId, createdAt])
+}
+
+model BulkAssignmentResult {
+  id String @id @default(cuid())
+  batchId String
+  employeeId String
+  status BulkResultStatus
+  reasonCode String?
+  safeMessage String?
+  assignmentId String?
+  createdAt DateTime @default(now())
+
+  batch BulkAssignmentBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  assignment Assignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+
+  @@index([batchId, status])
+}
+
+model Employee {
+  id String @id @default(cuid())
+  organizationId String
+  employeeCode String
+  fullName String
+  phone String?
+  normalizedPhone String?
+  jobTitle String?
+  avatarUrl String?
+  currentPositionId String?
+  status LifecycleStatus @default(ACTIVE)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  currentPosition Position? @relation("EmployeeCurrentPosition", fields: [currentPositionId], references: [id], onDelete: SetNull)
+  positionHistory EmployeePositionHistory[]
+  positionRequests PositionRequest[]
+  workerGroupMemberships WorkerGroupMember[]
+  bulkAssignmentResults BulkAssignmentResult[]
+  telegramAccount TelegramAccount?
+  assignments Assignment[]
+  attendance AttendanceRecord[]
+  @@unique([organizationId, employeeCode])
+  @@unique([organizationId, normalizedPhone])
+  @@index([organizationId, status])
+  @@index([organizationId, currentPositionId, status])
+}
+
+model TelegramAccount {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String @unique
+  telegramUserId String @unique
+  username String?
+  firstName String?
+  lastName String?
+  photoUrl String?
+  linkedAt DateTime @default(now())
+  lastVerifiedAt DateTime?
+  status LifecycleStatus @default(ACTIVE)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  @@index([organizationId, telegramUserId])
+}
+
+model Project {
+  id String @id @default(cuid())
+  organizationId String
+  code String
+  name String
+  status ProjectStatus @default(DRAFT)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  sites Site[]
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+}
+
+model Site {
+  id String @id @default(cuid())
+  organizationId String
+  projectId String
+  name String
+  latitude Decimal @db.Decimal(9, 6)
+  longitude Decimal @db.Decimal(9, 6)
+  allowedRadiusMeters Int
+  timezone String
+  status LifecycleStatus @default(ACTIVE)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  assignments Assignment[]
+  bulkAssignmentBatches BulkAssignmentBatch[]
+}
+
+model WorkSchedule {
+  id String @id @default(cuid())
+  organizationId String
+  name String
+  timezone String
+  startTime String
+  endTime String
+  graceMinutes Int @default(0)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  assignments Assignment[]
+  bulkAssignmentBatches BulkAssignmentBatch[]
+}
+
+model Assignment {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String
+  siteId String
+  scheduleId String
+  startsOn DateTime @db.Date
+  endsOn DateTime? @db.Date
+  status AssignmentStatus @default(ACTIVE)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  site Site @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  schedule WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  attendance AttendanceRecord[]
+  bulkAssignmentResults BulkAssignmentResult[]
+  @@index([employeeId, startsOn, endsOn, status])
+  @@index([organizationId, employeeId, status, startsOn, endsOn])
+}
+
+model AttendanceRecord {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String
+  assignmentId String
+  attendanceDate DateTime @db.Date
+  checkInAt DateTime?
+  checkOutAt DateTime?
+  checkInLatitude Decimal? @db.Decimal(9, 6)
+  checkInLongitude Decimal? @db.Decimal(9, 6)
+  checkInAccuracyMeters Decimal? @db.Decimal(8, 2)
+  checkInDistanceMeters Decimal? @db.Decimal(10, 2)
+  checkInVerification VerificationStatus?
+  checkInPhotoPath String?
+  checkOutLatitude Decimal? @db.Decimal(9, 6)
+  checkOutLongitude Decimal? @db.Decimal(9, 6)
+  checkOutAccuracyMeters Decimal? @db.Decimal(8, 2)
+  checkOutDistanceMeters Decimal? @db.Decimal(10, 2)
+  checkOutVerification VerificationStatus?
+  status AttendanceStatus @default(NOT_STARTED)
+  workDurationMinutes Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  events AttendanceEvent[]
+  corrections AttendanceCorrection[]
+  @@unique([assignmentId, attendanceDate])
+  @@index([organizationId, attendanceDate])
+  @@index([organizationId, employeeId, checkOutAt, checkInAt])
+}
+
+model AttendanceEvent {
+  id String @id @default(cuid())
+  attendanceRecordId String?
+  organizationId String
+  type AttendanceEventType
+  occurredAt DateTime @default(now())
+  metadata Json?
+  attendanceRecord AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  @@index([organizationId, occurredAt])
+}
+
+model AttendanceRequest {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String
+  action AttendanceAction
+  idempotencyKey String
+  attendanceRecordId String?
+  createdAt DateTime @default(now())
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  @@unique([organizationId, employeeId, action, idempotencyKey])
+}
+
+model AttendanceCorrection {
+  id String @id @default(cuid())
+  organizationId String
+  attendanceRecordId String
+  requestedByUserId String?
+  approvedByUserId String?
+  status CorrectionStatus @default(PENDING)
+  reason String
+  correctedCheckInAt DateTime?
+  correctedCheckOutAt DateTime?
+  correctedStatus AttendanceStatus?
+  createdAt DateTime @default(now())
+  resolvedAt DateTime?
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  attendanceRecord AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  @@index([organizationId, status])
+  @@index([attendanceRecordId])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+  organizationId String
+  actorUserId String?
+  action String
+  targetType String
+  targetId String
+  requestId String?
+  metadata Json?
+  occurredAt DateTime @default(now())
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  @@index([organizationId, occurredAt])
+  @@index([organizationId, targetType, targetId])
+}

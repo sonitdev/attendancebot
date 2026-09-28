@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #18181b;
+}
+
+body {
+  color: var(--tg-theme-text-color, var(--foreground));
+  background: var(--tg-theme-secondary-bg-color, #f4f4f5);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.mini-stage {
+  position: relative;
+  overflow-x: hidden;
+  background:
+    radial-gradient(520px 360px at 100% -8%, rgb(16 185 129 / 17%), transparent 58%),
+    radial-gradient(420px 300px at -6% 102%, rgb(59 130 246 / 10%), transparent 62%),
+    var(--tg-theme-secondary-bg-color, #f4f7f5);
+}
+
+.mini-stage__signal {
+  position: fixed;
+  width: 12rem;
+  height: 12rem;
+  right: -4rem;
+  top: 3rem;
+  border: 1px solid rgb(16 185 129 / 22%);
+  border-radius: 999px;
+  box-shadow: 0 0 0 26px rgb(16 185 129 / 4%), 0 0 0 55px rgb(16 185 129 / 2%);
+  pointer-events: none;
+  animation: mini-signal 5s ease-in-out infinite;
+}
+
+@keyframes mini-signal {
+  0%, 100% { transform: scale(.96); opacity: .45; }
+  50% { transform: scale(1.07); opacity: .9; }
+}
+
+.motion-stage button {
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1), filter 180ms ease, box-shadow 180ms ease;
+}
+
+.motion-stage button:active { transform: scale(.975); }
+
+.motion-stage > * {
+  box-shadow: 0 1px 0 rgb(255 255 255 / 85%) inset;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-stage *, .motion-stage *::before, .motion-stage *::after, .mini-stage__signal {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}

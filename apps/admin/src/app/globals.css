@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f7faf9;
+  --foreground: #0f172a;
+  --font-sans: var(--font-noto-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-noto-sans), system-ui, -apple-system, sans-serif;
+}
+
+html,
+body {
+  max-width: 100%;
+  width: 100%;
+  overflow-x: hidden;
+  color: #0f172a;
+  background-color: #f2f6f4;
+  font-family: var(--font-sans) !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.app-stage {
+  isolation: isolate;
+  position: relative;
+  background:
+    radial-gradient(900px 560px at 88% -10%, rgb(196 215 1 / 18%), transparent 58%),
+    radial-gradient(720px 520px at -8% 92%, rgb(2 63 38 / 18%), transparent 60%),
+    linear-gradient(135deg, #eaf1ed 0%, #f8fbf9 46%, #e9f2ec 100%);
+}
+
+.app-stage__aurora {
+  pointer-events: none;
+  position: fixed;
+  z-index: -1;
+  width: 34rem;
+  height: 34rem;
+  border-radius: 999px;
+  filter: blur(66px);
+  opacity: .28;
+  background: conic-gradient(from 210deg, #023f26, #c4d701, #0b6b43, #023f26);
+  right: -13rem;
+  top: -15rem;
+  animation: aurora-drift 15s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-drift {
+  from { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+  to { transform: translate3d(-5rem, 4rem, 0) rotate(24deg) scale(1.12); }
+}
+
+/* Force single Noto Sans font on all elements including inputs and buttons */
+button, input, select, textarea, code, pre, .font-mono, .tnum {
+  font-family: var(--font-sans) !important;
+}
+
+/* Botanical Primary Button with 1px Pure White Border Only */
+.btn-botanical {
+  border: 1px solid #ffffff !important;
+  background-color: #023F26 !important;
+  color: #ffffff !important;
+  transition: all 0.2s ease-in-out !important;
+}
+
+.btn-botanical:hover {
+  background-color: #012919 !important;
+}
+
+/* GSAP-style operational motion: tactile, short, and never blocking input. */
+.motion-stage button,
+.motion-stage a {
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 180ms ease, background-color 180ms ease !important;
+}
+
+.motion-stage button:active,
+.motion-stage a:active {
+  transform: scale(.97);
+}
+
+.motion-stage > * > * {
+  transform-origin: 50% 50%;
+}
+
+.motion-stage [class*="bg-white"] {
+  box-shadow: 0 1px 0 rgb(255 255 255 / 92%) inset, 0 16px 48px rgb(2 63 38 / 5%);
+}
+
+.motion-stage button:hover:not(:disabled),
+.motion-stage a:hover {
+  transform: translateY(-1px);
+}
+
+.motion-stage [data-live-status="true"] {
+  animation: status-pulse 2.8s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(196 215 1 / 0%); }
+  45% { box-shadow: 0 0 0 8px rgb(196 215 1 / 18%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-stage *, .motion-stage *::before, .motion-stage *::after, .app-stage__aurora {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* Matte Badge with 1px Pure White Border Only */
+.badge-white-border {
+  border: 1px solid #ffffff !important;
+}
+
+.site-location-pin {
+  background: transparent;
+  border: 0;
+}
+
+.site-location-pin span {
+  display: block;
+  width: 28px;
+  height: 28px;
+  border: 3px solid white;
+  border-radius: 50% 50% 50% 0;
+  background: #e11d48;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 35%);
+  transform: rotate(-45deg);
+}

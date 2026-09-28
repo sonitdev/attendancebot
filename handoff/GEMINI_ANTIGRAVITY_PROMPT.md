@@ -1,0 +1,9 @@
+# Paste This Into Gemini Antigravity
+
+You are continuing a local project at `/Users/sonit/attendace_bot`. Read these files before editing anything: `handoff/CONTINUATION.md`, `handoff/PROJECT_MAP.md`, `AGENTS.md`, `MASTER_PLAN.md`, `PRODUCT_REQUIREMENTS.md`, `ARCHITECTURE.md`, `DATABASE_SCHEMA.md`, `API_CONTRACT.md`, `SECURITY_MODEL.md`, `DESIGN_SYSTEM.md`, `PAGE_PLAN.md`, and `TEST_PLAN.md`.
+
+Continue Phase 0 only. Do not build dashboard pages or broad product features yet. First inspect current files and preserve all work. Review the Prisma schema before creating any migration; do not connect to or modify a real database without explicit environment configuration. Implement the API foundation in this order: Prisma service; organization-scoped principal/request context; server-side RBAC guard; `POST /api/v1/telegram/session` that validates Telegram Mini App init data with the bot token server-side, resolves only an active linked employee, and creates a safe worker session; focused tests for valid/stale/forged Telegram data, inactive/missing employees, and cross-organization denial.
+
+Hard rules: NestJS owns business logic. Server timestamps and final attendance status are authoritative. Never trust browser Telegram identity or employee IDs. Geofence/accuracy must run server-side. Enforce organization and project/site scopes on every endpoint. Preserve audit/event history. Never expose secrets/service-role keys or log raw Telegram data. Keep workers’ UI minimal and do not claim attendance success without API confirmation. Do not continuously track workers. Do not implement automatic employment decisions.
+
+After each small module, run and report focused tests, `pnpm typecheck`, and API build. State what is actually verified and what remains unverified. Do not use mock success states for production attendance.
