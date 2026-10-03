@@ -10,7 +10,7 @@ import { TelegramSessionService } from '../src/telegram/telegram-session.service
 
 function generateInitData(
   botToken: string,
-  user: { id: number; first_name?: string; last_name?: string; username?: string },
+  user: { id: number; first_name?: string; last_name?: string; username?: string; photo_url?: string },
   authDate = Math.floor(Date.now() / 1000),
 ): string {
   const params: Record<string, string> = {
@@ -57,11 +57,11 @@ describe('TelegramSessionService and Controller', () => {
 
     mockPrisma = {
       telegramAccount: {
-        findUnique: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
         update: vi.fn(),
       },
       employee: {
-        update: vi.fn(),
+        updateMany: vi.fn(),
       },
       registrationRequest: {
         findFirst: vi.fn(),
@@ -85,7 +85,7 @@ describe('TelegramSessionService and Controller', () => {
       photo_url: 'https://t.me/i/userpic/alice.jpg',
     });
 
-    mockPrisma.telegramAccount.findUnique.mockResolvedValue({
+    mockPrisma.telegramAccount.findMany.mockResolvedValue([{
       id: 'tg-acc-1',
       organizationId: 'org-abc',
       employeeId: 'emp-xyz',
@@ -93,6 +93,7 @@ describe('TelegramSessionService and Controller', () => {
       status: 'ACTIVE',
       employee: {
         id: 'emp-xyz',
+        organizationId: 'org-abc',
         employeeCode: 'EMP-001',
         fullName: 'Alice Worker',
         status: 'ACTIVE',
@@ -103,10 +104,10 @@ describe('TelegramSessionService and Controller', () => {
         name: 'Acme Construction',
         slug: 'acme-construction',
       },
-    });
+    }]);
 
     mockPrisma.telegramAccount.update.mockResolvedValue({});
-    mockPrisma.employee.update.mockResolvedValue({});
+    mockPrisma.employee.updateMany.mockResolvedValue({});
 
     const result = await controller.createSession({ initData });
 
@@ -134,14 +135,14 @@ describe('TelegramSessionService and Controller', () => {
     // Verifies lastVerifiedAt was updated
     expect(mockPrisma.telegramAccount.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'tg-acc-1' },
+        where: { id: 'tg-acc-1', organizationId: 'org-abc', telegramUserId: '123456' },
       }),
     );
   });
 
   it('rejects unlinked Telegram user who has no database record', async () => {
     const initData = generateInitData(botToken, { id: 999999 });
-    mockPrisma.telegramAccount.findUnique.mockResolvedValue(null);
+    mockPrisma.telegramAccount.findMany.mockResolvedValue([]);
 
     await expect(telegramSessionService.createSession(initData)).rejects.toThrow(
       new UnauthorizedException('TELEGRAM_UNLINKED'),
@@ -150,12 +151,12 @@ describe('TelegramSessionService and Controller', () => {
 
   it('rejects when telegram account status is INACTIVE', async () => {
     const initData = generateInitData(botToken, { id: 123456 });
-    mockPrisma.telegramAccount.findUnique.mockResolvedValue({
+    mockPrisma.telegramAccount.findMany.mockResolvedValue([{
       id: 'tg-acc-1',
       status: 'INACTIVE',
       employee: { status: 'ACTIVE' },
       organization: { id: 'org-1' },
-    });
+    }]);
 
     await expect(telegramSessionService.createSession(initData)).rejects.toThrow(
       new UnauthorizedException('TELEGRAM_ACCOUNT_INACTIVE'),
@@ -164,7 +165,7 @@ describe('TelegramSessionService and Controller', () => {
 
   it('rejects when employee status is INACTIVE with EMPLOYEE_INACTIVE code', async () => {
     const initData = generateInitData(botToken, { id: 123456 });
-    mockPrisma.telegramAccount.findUnique.mockResolvedValue({
+    mockPrisma.telegramAccount.findMany.mockResolvedValue([{
       id: 'tg-acc-1',
       organizationId: 'org-abc',
       employeeId: 'emp-xyz',
@@ -177,7 +178,7 @@ describe('TelegramSessionService and Controller', () => {
       organization: {
         id: 'org-abc',
       },
-    });
+    }]);
 
     await expect(telegramSessionService.createSession(initData)).rejects.toThrow(
       new ForbiddenException('EMPLOYEE_INACTIVE'),
@@ -191,7 +192,7 @@ describe('TelegramSessionService and Controller', () => {
     await expect(telegramSessionService.createSession(initData)).rejects.toThrow(
       new UnauthorizedException('TELEGRAM_INVALID'),
     );
-    expect(mockPrisma.telegramAccount.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.telegramAccount.findMany).not.toHaveBeenCalled();
   });
 
   it('rejects forged Telegram data before database lookup', async () => {
@@ -201,7 +202,7 @@ describe('TelegramSessionService and Controller', () => {
     await expect(telegramSessionService.createSession(forged)).rejects.toThrow(
       new UnauthorizedException('TELEGRAM_INVALID'),
     );
-    expect(mockPrisma.telegramAccount.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.telegramAccount.findMany).not.toHaveBeenCalled();
   });
 
   it('rejects if TELEGRAM_BOT_TOKEN is not configured', async () => {

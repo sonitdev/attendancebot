@@ -47,7 +47,11 @@ describe('Admin Authentication and Resource Queries', () => {
     };
 
     adminService = new AdminService(mockPrisma as unknown as PrismaService);
-    adminAuthController = new AdminAuthController(mockPrisma as unknown as PrismaService, sessionService);
+    adminAuthController = new AdminAuthController(
+      mockPrisma as unknown as PrismaService,
+      { verify: vi.fn().mockReturnValue(true) } as any,
+      sessionService,
+    );
   });
 
   describe('SessionService admin tokens', () => {
@@ -102,6 +106,7 @@ describe('Admin Authentication and Resource Queries', () => {
         adminAuthController.adminLogin({
           email: 'admin@acme.com',
           orgSlug: 'unknown-slug',
+          password: 'test-password',
         }),
       ).rejects.toThrow(UnauthorizedException);
     });
@@ -114,6 +119,7 @@ describe('Admin Authentication and Resource Queries', () => {
         adminAuthController.adminLogin({
           email: 'inactive@acme.com',
           orgSlug: 'acme',
+          password: 'test-password',
         }),
       ).rejects.toThrow(UnauthorizedException);
     });
@@ -131,6 +137,7 @@ describe('Admin Authentication and Resource Queries', () => {
         adminAuthController.adminLogin({
           email: 'norole@acme.com',
           orgSlug: 'acme',
+          password: 'test-password',
         }),
       ).rejects.toThrow(ForbiddenException);
     });
@@ -154,6 +161,7 @@ describe('Admin Authentication and Resource Queries', () => {
       const response = await adminAuthController.adminLogin({
         email: 'admin@acme.com',
         orgSlug: 'acme',
+        password: 'test-password',
       });
 
       expect(response.token).toBeDefined();
@@ -244,6 +252,11 @@ describe('Admin Authentication and Resource Queries', () => {
           code: true,
           name: true,
           status: true,
+          workMode: true,
+          telegramChatId: true,
+          telegramConnectionStatus: true,
+          telegramHealthCheckedAt: true,
+          telegramHealthError: true,
           _count: { select: { sites: true } },
         },
         orderBy: { code: 'asc' },
@@ -254,6 +267,11 @@ describe('Admin Authentication and Resource Queries', () => {
           code: 'PRJ-ALPHA',
           name: 'Riverside Tower',
           status: 'ACTIVE',
+          workMode: undefined,
+          telegramChatId: undefined,
+          telegramConnectionStatus: undefined,
+          telegramHealthCheckedAt: null,
+          telegramHealthError: undefined,
           sitesCount: 3,
         },
       ]);

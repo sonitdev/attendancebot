@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
+import { km } from '@workforce/contracts';
 
 type Coordinates = { latitude: number; longitude: number };
 
@@ -92,7 +93,7 @@ export default function SiteLocationPicker({
         />
       </MapContainer>
       <div className="flex items-center justify-between gap-3 px-3 py-2 text-[11px] text-slate-600">
-        <span>ចុចលើផែនទី ឬអូសម្ជុលក្រហមទៅច្រកចូលការដ្ឋាន។</span>
+        <span>{km.sites.mapHint}</span>
         <span className="shrink-0 font-mono">{latitude.toFixed(6)}, {longitude.toFixed(6)}</span>
       </div>
     </div>

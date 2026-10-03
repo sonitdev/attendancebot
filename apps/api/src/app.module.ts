@@ -15,10 +15,13 @@ import { RegistrationRequestsModule } from './registration-requests/registration
 import { WorkerGroupsModule } from './worker-groups/worker-groups.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { TelegramModule } from './telegram/telegram.module.js';
+import { SalesModule } from './sales/sales.module.js';
+import { CacheModule } from './common/cache/cache.module.js';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    CacheModule,
     PrismaModule,
     AuthModule,
     TelegramModule,
@@ -30,6 +33,7 @@ import { TelegramModule } from './telegram/telegram.module.js';
     PositionRequestsModule,
     RegistrationRequestsModule,
     WorkerGroupsModule,
+    SalesModule,
   ],
   controllers: [HealthController],
   providers: [

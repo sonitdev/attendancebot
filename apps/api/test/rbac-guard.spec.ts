@@ -7,6 +7,7 @@ import { AuthGuard } from '../src/auth/guards/auth.guard.js';
 import { RbacGuard } from '../src/auth/guards/rbac.guard.js';
 import type { AdminPrincipal, WorkerPrincipal } from '../src/auth/principal.js';
 import type { SessionService } from '../src/auth/session.service.js';
+import type { PrismaService } from '../src/prisma/prisma.service.js';
 
 function createMockExecutionContext(options: {
   headers?: Record<string, string | undefined>;
@@ -44,31 +45,33 @@ describe('AuthGuard and RbacGuard Tenant Isolation and RBAC', () => {
       verifyToken: vi.fn(),
     } as unknown as SessionService;
 
-    authGuard = new AuthGuard(reflector, sessionService);
+    authGuard = new AuthGuard(reflector, sessionService, {
+      telegramAccount: { findFirst: vi.fn().mockResolvedValue({ id: 'account-1' }) },
+    } as unknown as PrismaService);
   });
 
   describe('AuthGuard', () => {
-    it('allows access to public endpoints without any token', () => {
+    it('allows access to public endpoints without any token', async () => {
       vi.spyOn(reflector, 'getAllAndOverride').mockImplementation((key) => {
         if (key === IS_PUBLIC_KEY) return true;
         return undefined;
       });
 
       const context = createMockExecutionContext({});
-      expect(authGuard.canActivate(context)).toBe(true);
+      await expect(authGuard.canActivate(context)).resolves.toBe(true);
     });
 
-    it('rejects protected endpoint when Authorization header is missing', () => {
+    it('rejects protected endpoint when Authorization header is missing', async () => {
       vi.spyOn(reflector, 'getAllAndOverride').mockImplementation((key) => {
         if (key === IS_PUBLIC_KEY) return false;
         return undefined;
       });
 
       const context = createMockExecutionContext({});
-      expect(() => authGuard.canActivate(context)).toThrow(UnauthorizedException);
+      await expect(authGuard.canActivate(context)).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
-    it('successfully validates Bearer token and sets principal on request', () => {
+    it('successfully validates Bearer token and sets principal on request', async () => {
       vi.spyOn(reflector, 'getAllAndOverride').mockImplementation((key) => {
         if (key === IS_PUBLIC_KEY) return false;
         return undefined;
@@ -87,7 +90,7 @@ describe('AuthGuard and RbacGuard Tenant Isolation and RBAC', () => {
         headers: { authorization: 'Bearer valid-token' },
       });
 
-      expect(authGuard.canActivate(context)).toBe(true);
+      await expect(authGuard.canActivate(context)).resolves.toBe(true);
       const req: any = context.switchToHttp().getRequest();
       expect(req.principal).toEqual(workerPrincipal);
       expect(req.organizationId).toBe('org-tenant-1');

@@ -27,6 +27,7 @@ import {
 } from '../auth/decorators/principal.decorator.js';
 import { RequireRoles } from '../auth/decorators/rbac.decorators.js';
 import type { AdminPrincipal, WorkerPrincipal } from '../auth/principal.js';
+import { AdminScopeService } from '../auth/admin-scope.service.js';
 import { AttendanceService } from './attendance.service.js';
 import { CorrectionService } from './correction.service.js';
 
@@ -35,6 +36,7 @@ export class AttendanceController {
   constructor(
     private readonly attendanceService: AttendanceService,
     private readonly correctionService: CorrectionService,
+    private readonly adminScope: AdminScopeService,
   ) {}
 
   @Post('check-in')
@@ -81,32 +83,39 @@ export class AttendanceController {
     return this.attendanceService.checkOut(worker, parseResult.data, idempotencyKey.trim());
   }
 
-  @RequireRoles('OWNER', 'HR', 'PROJECT_MANAGER', 'SITE_MANAGER')
+  @RequireRoles('OWNER', 'HR', 'PROJECT_MANAGER', 'SITE_MANAGER', 'VIEWER')
   @Get('today')
   async getTodayAttendance(
     @CurrentOrganizationId() organizationId: string,
+    @CurrentAdmin() admin: AdminPrincipal,
     @Query() query: unknown,
   ) {
     const parseResult = adminAttendanceQuerySchema.safeParse(query);
     const validatedQuery = parseResult.success ? parseResult.data : {};
-    return this.attendanceService.getTodayAttendanceForAdmin(organizationId, validatedQuery);
+    if (validatedQuery.projectId) await this.adminScope.assertProject(admin, validatedQuery.projectId);
+    if (validatedQuery.siteId) await this.adminScope.assertSite(admin, validatedQuery.siteId);
+    return this.attendanceService.getTodayAttendanceForAdmin(organizationId, validatedQuery, await this.adminScope.resolve(admin));
   }
 
-  @RequireRoles('OWNER', 'HR', 'PROJECT_MANAGER', 'SITE_MANAGER')
+  @RequireRoles('OWNER', 'HR', 'PROJECT_MANAGER', 'SITE_MANAGER', 'VIEWER')
   @Get('exceptions')
   async getExceptions(
     @CurrentOrganizationId() organizationId: string,
+    @CurrentAdmin() admin: AdminPrincipal,
     @Query('siteId') siteId?: string,
     @Query('projectId') projectId?: string,
     @Query('status') status?: string,
   ) {
-    return this.correctionService.listExceptions(organizationId, { siteId, projectId, status });
+    if (projectId) await this.adminScope.assertProject(admin, projectId);
+    if (siteId) await this.adminScope.assertSite(admin, siteId);
+    return this.correctionService.listExceptions(organizationId, { siteId, projectId, status }, await this.adminScope.resolve(admin));
   }
 
-  @RequireRoles('OWNER', 'HR', 'PROJECT_MANAGER', 'SITE_MANAGER')
+  @RequireRoles('OWNER', 'HR', 'PROJECT_MANAGER', 'SITE_MANAGER', 'VIEWER')
   @Get('export')
   async exportAttendance(
     @CurrentOrganizationId() organizationId: string,
+    @CurrentAdmin() admin: AdminPrincipal,
     @Query() query: unknown,
     @Res({ passthrough: true }) res: any,
   ) {
@@ -115,6 +124,7 @@ export class AttendanceController {
     const result = await this.correctionService.exportAttendanceRecords(
       organizationId,
       validatedQuery,
+      await this.adminScope.resolve(admin),
     );
 
     if (result.format === 'csv') {
@@ -146,6 +156,7 @@ export class AttendanceController {
         errors: parseResult.error.errors,
       });
     }
+    await this.adminScope.assertCorrection(admin, id);
     return this.correctionService.resolveCorrection(
       organizationId,
       id,
@@ -169,6 +180,7 @@ export class AttendanceController {
         errors: parseResult.error.errors,
       });
     }
+    await this.adminScope.assertAttendance(admin, id);
     return this.correctionService.createCorrection(
       organizationId,
       id,
@@ -177,12 +189,14 @@ export class AttendanceController {
     );
   }
 
-  @RequireRoles('OWNER', 'HR', 'PROJECT_MANAGER', 'SITE_MANAGER')
+  @RequireRoles('OWNER', 'HR', 'PROJECT_MANAGER', 'SITE_MANAGER', 'VIEWER')
   @Get(':id')
   async getAttendanceDetail(
     @CurrentOrganizationId() organizationId: string,
+    @CurrentAdmin() admin: AdminPrincipal,
     @Param('id') id: string,
   ) {
-    return this.attendanceService.getAttendanceDetailForAdmin(organizationId, id);
+    await this.adminScope.assertAttendance(admin, id);
+    return this.attendanceService.getAttendanceDetailForAdmin(organizationId, id, await this.adminScope.resolve(admin));
   }
 }

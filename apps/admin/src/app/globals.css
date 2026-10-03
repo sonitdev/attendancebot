@@ -3,10 +3,40 @@
 @tailwind utilities;
 
 :root {
-  --background: #f7faf9;
-  --foreground: #0f172a;
-  --font-sans: var(--font-noto-sans), system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-noto-sans), system-ui, -apple-system, sans-serif;
+  --background: #f3f5f1;
+  --foreground: #18352b;
+  --font-sans: 'Kantumruy Pro', sans-serif;
+  --font-data: 'Roboto Flex', 'Kantumruy Pro', sans-serif;
+  --ink: #18352b;
+  --forest: #063f2b;
+  --lime: #d9e86c;
+  --paper: #fbfcf8;
+}
+
+html[lang='en'],
+html[data-locale='en'] {
+  --font-sans: 'Roboto Flex', sans-serif;
+}
+
+html[lang='km'],
+html[data-locale='km'] {
+  --font-sans: 'Kantumruy Pro', sans-serif;
+}
+
+@font-face {
+  font-family: 'Kantumruy Pro';
+  src: url('/fonts/KantumruyPro-VariableFont_wght.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Roboto Flex';
+  src: url('/fonts/RobotoFlex-Variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
 }
 
 html,
@@ -15,19 +45,32 @@ body {
   width: 100%;
   overflow-x: hidden;
   color: #0f172a;
-  background-color: #f2f6f4;
+  background-color: var(--background);
   font-family: var(--font-sans) !important;
+  letter-spacing: -0.012em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tailwind's generated .font-sans utility would otherwise replace the
+   locale-aware font variable with ui-sans-serif/system-ui. */
+body.font-sans,
+.font-sans {
+  font-family: var(--font-sans) !important;
+  font-weight: 500;
+  font-variation-settings: "wght" 500;
 }
 
 .app-stage {
   isolation: isolate;
   position: relative;
   background:
-    radial-gradient(900px 560px at 88% -10%, rgb(196 215 1 / 18%), transparent 58%),
-    radial-gradient(720px 520px at -8% 92%, rgb(2 63 38 / 18%), transparent 60%),
-    linear-gradient(135deg, #eaf1ed 0%, #f8fbf9 46%, #e9f2ec 100%);
+    radial-gradient(900px 560px at 88% -10%, color-mix(in srgb, var(--portal-accent) 18%, transparent), transparent 58%),
+    radial-gradient(720px 520px at -8% 92%, color-mix(in srgb, var(--portal-primary) 18%, transparent), transparent 60%),
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--portal-primary) 7%, white) 0%,
+      var(--paper) 48%,
+      color-mix(in srgb, var(--portal-accent) 8%, white) 100%);
 }
 
 .app-stage__aurora {
@@ -39,7 +82,7 @@ body {
   border-radius: 999px;
   filter: blur(66px);
   opacity: .28;
-  background: conic-gradient(from 210deg, #023f26, #c4d701, #0b6b43, #023f26);
+  background: conic-gradient(from 210deg, var(--portal-primary), var(--portal-accent), color-mix(in srgb, var(--portal-primary) 72%, white), var(--portal-primary));
   right: -13rem;
   top: -15rem;
   animation: aurora-drift 15s ease-in-out infinite alternate;
@@ -50,21 +93,52 @@ body {
   to { transform: translate3d(-5rem, 4rem, 0) rotate(24deg) scale(1.12); }
 }
 
-/* Force single Noto Sans font on all elements including inputs and buttons */
+/* Keep form controls aligned with the active locale font and medium reading weight. */
 button, input, select, textarea, code, pre, .font-mono, .tnum {
   font-family: var(--font-sans) !important;
+  font-weight: 500;
+  font-variation-settings: "wght" 500;
+}
+
+.data-font, .tnum {
+  font-family: var(--font-data) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shared premium surface language for every page-level panel. */
+.motion-stage [class*="rounded-2xl"],
+.motion-stage [class*="rounded-3xl"] {
+  border-color: rgb(6 63 43 / 10%);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 92%) inset, 0 18px 44px rgb(6 63 43 / 6%);
+}
+
+.motion-stage h1,
+.motion-stage h2,
+.motion-stage h3 {
+  letter-spacing: -0.035em;
+  color: var(--ink);
+}
+
+input, select, textarea {
+  border-color: rgb(6 63 43 / 14%) !important;
+  background-color: rgb(251 252 248 / 92%);
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: 3px solid rgb(217 232 108 / 35%);
+  border-color: var(--portal-primary, var(--forest)) !important;
 }
 
 /* Botanical Primary Button with 1px Pure White Border Only */
 .btn-botanical {
   border: 1px solid #ffffff !important;
-  background-color: #023F26 !important;
+  background-color: var(--portal-primary, #023F26) !important;
   color: #ffffff !important;
   transition: all 0.2s ease-in-out !important;
 }
 
 .btn-botanical:hover {
-  background-color: #012919 !important;
+  background-color: color-mix(in srgb, var(--portal-primary, #023F26) 82%, black) !important;
 }
 
 /* GSAP-style operational motion: tactile, short, and never blocking input. */
@@ -97,7 +171,7 @@ button, input, select, textarea, code, pre, .font-mono, .tnum {
 
 @keyframes status-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgb(196 215 1 / 0%); }
-  45% { box-shadow: 0 0 0 8px rgb(196 215 1 / 18%); }
+  45% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--portal-accent, #c4d701) 18%, transparent); }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
-import type {
-  AdminAttendanceQuery,
+import { km, type AdminAttendanceQuery,
   AdminLoginInput,
+  AdminRegistrationInput,
   AdminSessionResponse,
   AssignmentListItem,
   AttendanceHistoryItem,
@@ -38,15 +38,26 @@ import type {
   BulkAssignmentPreviewResponse,
   BulkAssignmentApplyResponse,
   RegistrationRequestListItem,
+  TelegramReportGroupListItem,
+  UpdateTelegramReportGroupInput,
   ResolveRegistrationRequestInput,
 } from '@workforce/contracts';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+const ADMIN_REQUEST_TIMEOUT_MS = 20_000;
 
 export interface AdminUser {
   id: string;
   email: string;
   roles: string[];
+}
+
+export interface AdminAccessScopeUser {
+  id: string;
+  email: string;
+  roles: Array<{ code: string; name: string }>;
+  projects: Array<{ id: string; code: string; name: string }>;
+  sites: Array<{ id: string; name: string; projectId: string }>;
 }
 
 export interface AdminOrg {
@@ -93,8 +104,9 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const session = getStoredSession();
+  const hasBody = options.body !== undefined && options.body !== null;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers as Record<string, string>),
   };
 
@@ -105,15 +117,29 @@ async function request<T>(
     headers['x-organization-id'] = session.organization.id;
   }
 
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
+    const controller = options.signal ? undefined : new AbortController();
+    timeoutId = controller ? setTimeout(() => controller.abort(), ADMIN_REQUEST_TIMEOUT_MS) : undefined;
     const res = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
       headers,
+      ...(controller ? { signal: controller.signal } : {}),
     });
+    if (timeoutId) clearTimeout(timeoutId);
 
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
+      if (res.status === 401 && typeof window !== 'undefined') {
+        // A token can expire while a tab remains open. Remove it immediately
+        // and return to the sign-in flow rather than rendering an API code.
+        clearStoredSession();
+        if (window.location.pathname !== '/login') {
+          window.location.assign('/login');
+        }
+        throw new Error(km.app.sessionExpired);
+      }
       const errorMsg = data?.message || data?.error || `HTTP error ${res.status}`;
       throw new Error(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
     }
@@ -123,6 +149,10 @@ async function request<T>(
     }
     return data as T;
   } catch (err: any) {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (err?.name === 'AbortError') {
+      throw new Error('The request timed out. Please try again.');
+    }
     if (err.message?.includes('fetch failed') || err.message?.includes('ECONNREFUSED')) {
       throw new Error('API server is starting up. Please refresh in a moment.');
     }
@@ -209,6 +239,16 @@ export const adminApi = {
     return res;
   },
 
+  async registerOrganization(input: AdminRegistrationInput): Promise<AdminSessionResponse> {
+    clearApiCache();
+    const res = await request<AdminSessionResponse>('/auth/register-organization', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    setStoredSession({ token: res.token, user: res.user, organization: res.organization });
+    return res;
+  },
+
   // Today Attendance
   async getTodayAttendance(query: AdminAttendanceQuery = {}, forceRefresh = false) {
     const params = new URLSearchParams();
@@ -253,6 +293,15 @@ export const adminApi = {
       method: 'POST',
       body: JSON.stringify(input),
     });
+  },
+  async createTelegramOwnerPairing(): Promise<{ url: string; expiresAt: string }> {
+    return request('/telegram/owner-pairing', { method: 'POST', body: JSON.stringify({}) });
+  },
+  async listTelegramReportGroups(forceRefresh = false): Promise<TelegramReportGroupListItem[]> {
+    return cachedRequest<TelegramReportGroupListItem[]>('/telegram-report-groups', {}, forceRefresh);
+  },
+  async updateTelegramReportGroup(id: string, input: UpdateTelegramReportGroupInput) {
+    return request<{ id: string; status: string }>(`/telegram-report-groups/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
   },
 
   // Projects
@@ -373,6 +422,72 @@ export const adminApi = {
     return cachedRequest<AuditLogListItem[]>(`/audit-logs?limit=${limit}`, {}, forceRefresh);
   },
 
+  async getProjectDetail(id: string) {
+    return request<any>(`/projects/${id}`);
+  },
+
+  async refreshProjectTelegramHealth(id: string) {
+    return request<any>(`/projects/${id}/telegram-health`, { method: 'POST' });
+  },
+
+  async getEmployeeDetail(id: string) {
+    return request<any>(`/employees/${id}`);
+  },
+
+  async listSecurityEvents(limit = 100) {
+    return request<any[]>(`/security-events?limit=${limit}`);
+  },
+
+  async getSettings() {
+    return request<any>('/settings');
+  },
+
+  async updateSettings(input: any) {
+    return request<any>('/settings', { method: 'PATCH', body: JSON.stringify(input) });
+  },
+
+  async uploadLogo(imageDataUrl: string) {
+    return request<{ logoUrl: string }>('/settings/logo', { method: 'POST', body: JSON.stringify({ imageDataUrl }) });
+  },
+
+  async listAdminAccessScopes() {
+    return request<AdminAccessScopeUser[]>('/admin-users/scopes');
+  },
+
+  async replaceAdminAccessScopes(userId: string, input: { projectIds: string[]; siteIds: string[] }) {
+    return request<{ userId: string; projectIds: string[]; siteIds: string[] }>(`/admin-users/${userId}/scopes`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
+
+  async getSalesOverview(query?: { date?: string; projectId?: string }) {
+    const params = new URLSearchParams();
+    if (query?.date) params.set('date', query.date);
+    if (query?.projectId) params.set('projectId', query.projectId);
+    return request<any>(`/sales/overview${params.size ? `?${params}` : ''}`);
+  },
+
+  async listOutlets(projectId?: string) {
+    return request<any[]>(`/sales/outlets${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`);
+  },
+
+  async createOutlet(input: any) {
+    return request<any>('/sales/outlets', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  async updateOutlet(id: string, input: any) {
+    return request<any>(`/sales/outlets/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+  },
+
+  async archiveOutlet(id: string) {
+    return request<any>(`/sales/outlets/${id}/archive`, { method: 'POST' });
+  },
+
+  async getSalesReportDetail(reportId: string) {
+    return request<any>(`/sales/reports/${reportId}`);
+  },
+
   // Exceptions & Corrections
   async getExceptions(query?: { siteId?: string; projectId?: string; status?: string }, forceRefresh = false): Promise<AttendanceExceptionItem[]> {
     const params = new URLSearchParams();
@@ -398,13 +513,15 @@ export const adminApi = {
   },
 
   // Attendance Export
-  async exportAttendanceCsv(query?: { startDate?: string; endDate?: string; siteId?: string; projectId?: string }): Promise<string> {
+  async exportAttendanceCsv(query?: { startDate?: string; endDate?: string; siteId?: string; projectId?: string; employeeId?: string; exceptionsOnly?: boolean }): Promise<string> {
     const session = getStoredSession();
     const params = new URLSearchParams({ format: 'csv' });
     if (query?.startDate) params.append('startDate', query.startDate);
     if (query?.endDate) params.append('endDate', query.endDate);
     if (query?.siteId) params.append('siteId', query.siteId);
     if (query?.projectId) params.append('projectId', query.projectId);
+    if (query?.employeeId) params.append('employeeId', query.employeeId);
+    if (query?.exceptionsOnly) params.append('exceptionsOnly', 'true');
 
     const headers: Record<string, string> = {};
     if (session?.token) headers['Authorization'] = `Bearer ${session.token}`;
@@ -419,12 +536,14 @@ export const adminApi = {
     return res.text();
   },
 
-  async exportAttendanceJson(query?: { startDate?: string; endDate?: string; siteId?: string; projectId?: string }): Promise<AttendanceExportRow[]> {
+  async exportAttendanceJson(query?: { startDate?: string; endDate?: string; siteId?: string; projectId?: string; employeeId?: string; exceptionsOnly?: boolean }): Promise<AttendanceExportRow[]> {
     const params = new URLSearchParams({ format: 'json' });
     if (query?.startDate) params.append('startDate', query.startDate);
     if (query?.endDate) params.append('endDate', query.endDate);
     if (query?.siteId) params.append('siteId', query.siteId);
     if (query?.projectId) params.append('projectId', query.projectId);
+    if (query?.employeeId) params.append('employeeId', query.employeeId);
+    if (query?.exceptionsOnly) params.append('exceptionsOnly', 'true');
     return request<AttendanceExportRow[]>(`/attendance/export?${params.toString()}`);
   },
 

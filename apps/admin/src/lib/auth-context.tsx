@@ -9,12 +9,14 @@ import {
   setStoredSession,
   type AdminAuthState,
 } from './api';
-import type { AdminLoginInput } from '@workforce/contracts';
+import type { AdminLoginInput, AdminRegistrationInput } from '@workforce/contracts';
+import { PORTAL_BRANDING_UPDATED, type PortalBranding } from './portal-branding';
 
 interface AuthContextType {
   session: AdminAuthState | null;
   isLoading: boolean;
   login: (input: AdminLoginInput) => Promise<void>;
+  registerOrganization: (input: AdminRegistrationInput) => Promise<void>;
   logout: () => void;
 }
 
@@ -33,20 +35,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const syncOrganizationMetadata = (event: Event) => {
+      const branding = (event as CustomEvent<PortalBranding>).detail;
+      if (!branding.id || !branding.name) return;
+      setSession((current) => {
+        if (!current || current.organization.id !== branding.id || current.organization.name === branding.name) return current;
+        const next = {
+          ...current,
+          organization: { ...current.organization, name: branding.name as string },
+        };
+        setStoredSession(next);
+        return next;
+      });
+    };
+    window.addEventListener(PORTAL_BRANDING_UPDATED, syncOrganizationMetadata);
+    return () => window.removeEventListener(PORTAL_BRANDING_UPDATED, syncOrganizationMetadata);
+  }, []);
+
+  useEffect(() => {
     if (mounted && !session && pathname !== '/login') {
       router.push('/login');
     }
-    if (mounted && session) {
-      // Warm up in-memory cache in background so all page navigation is instant (0ms)
-      adminApi.getTodayAttendance().catch(() => {});
-      adminApi.listEmployees().catch(() => {});
-      adminApi.listProjects().catch(() => {});
-      adminApi.listSites().catch(() => {});
-      adminApi.listSchedules().catch(() => {});
-      adminApi.listAssignments().catch(() => {});
-      adminApi.getExceptions().catch(() => {});
-    }
-  }, [mounted, session, pathname, router]);
+  }, [mounted, pathname, router, session]);
+
+  useEffect(() => {
+    if (!session?.token) return;
+    // Prime the core operational data once per authenticated session. Running
+    // this again on every route change competed with each page's own request.
+    void Promise.all([
+      adminApi.getTodayAttendance(),
+      adminApi.listEmployees(),
+      adminApi.listProjects(),
+      adminApi.listSites(),
+      adminApi.listSchedules(),
+      adminApi.listAssignments(),
+      adminApi.getExceptions(),
+    ]).catch(() => undefined);
+  }, [session?.token]);
 
   const login = async (input: AdminLoginInput) => {
     const res = await adminApi.login(input);
@@ -57,7 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     setStoredSession(newSession);
     setSession(newSession);
-    router.push('/');
+    router.push(`/${res.organization.slug}`);
   };
 
   const logout = () => {
@@ -66,8 +91,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/login');
   };
 
+  const registerOrganization = async (input: AdminRegistrationInput) => {
+    const res = await adminApi.registerOrganization(input);
+    const newSession: AdminAuthState = {
+      token: res.token,
+      user: res.user,
+      organization: res.organization,
+    };
+    setStoredSession(newSession);
+    setSession(newSession);
+    router.push(`/${res.organization.slug}`);
+  };
+
   return (
-    <AuthContext.Provider value={{ session, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ session, isLoading, login, registerOrganization, logout }}>
       {children}
     </AuthContext.Provider>
   );

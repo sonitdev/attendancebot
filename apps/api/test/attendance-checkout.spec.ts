@@ -1,166 +1,55 @@
-import { BadRequestException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AttendanceService } from '../src/attendance/attendance.service.js';
+import { readAttendanceReplay, readOpenAttendance } from '../src/attendance/worker-read-model.js';
+import { writeAttendance } from '../src/attendance/attendance-write-model.js';
 import type { WorkerPrincipal } from '../src/auth/principal.js';
-import type { PrismaService } from '../src/prisma/prisma.service.js';
+vi.mock('../src/attendance/worker-read-model.js', () => ({ readAttendanceReplay: vi.fn(), readOpenAttendance: vi.fn() }));
+vi.mock('../src/attendance/attendance-write-model.js', () => ({ writeAttendance: vi.fn() }));
 
-describe('AttendanceService - Check-Out', () => {
-  let attendanceService: AttendanceService;
-  let mockPrisma: any;
-
-  const worker: WorkerPrincipal = {
-    type: 'worker',
-    organizationId: 'org-tenant-1',
-    employeeId: 'emp-101',
-    telegramUserId: 'tg-999',
-    sessionId: 'session-xyz',
-  };
-
-  const sampleOpenRecord = {
-    id: 'rec-open-1',
-    organizationId: 'org-tenant-1',
-    employeeId: 'emp-101',
-    checkInAt: new Date(Date.now() - 8 * 3600 * 1000), // 8 hours ago
-    checkOutAt: null,
-    assignment: {
-      site: {
-        id: 'site-1',
-        name: 'Phnom Penh Site A',
-        latitude: 11.5564,
-        longitude: 104.9282,
-        allowedRadiusMeters: 100,
-        timezone: 'Asia/Phnom_Penh',
-      },
-      schedule: {
-        id: 'schedule-1',
-        name: 'Standard Day Shift',
-        startTime: '08:00',
-        endTime: '17:00',
-        graceMinutes: 15,
-      },
-    },
-  };
-
+describe('check-out orchestration', () => {
+  const worker: WorkerPrincipal = { type: 'worker', organizationId: 'org', employeeId: 'worker', telegramUserId: 'tg', sessionId: 'session' };
+  const input = { latitude: 11.5564, longitude: 104.9282, accuracyMeters: 10 };
+  let service: AttendanceService; let open: any;
+  const authorize = vi.fn(); const dispatch = vi.fn();
   beforeEach(() => {
-    mockPrisma = {
-      attendanceRecord: {
-        findUnique: vi.fn(),
-        findFirst: vi.fn(),
-        update: vi.fn(),
-      },
-      attendanceRequest: {
-        findUnique: vi.fn(),
-        create: vi.fn(),
-      },
-      attendanceEvent: {
-        create: vi.fn(),
-      },
-      auditLog: {
-        create: vi.fn(),
-      },
-      $transaction: vi.fn(async (cb) => cb(mockPrisma)),
+    vi.resetAllMocks();
+    open = {
+      id: 'record', organizationId: 'org', employeeId: 'worker', projectId: 'project', telegramChatId: '-100',
+      checkInAt: new Date(Date.now() - 8 * 3_600_000), employeeFullName: 'Dara', connection: null,
+      project: { id: 'project', organizationId: 'org', name: 'Project', status: 'ACTIVE', workMode: 'SITE', telegramChatId: '-100' },
+      assignment: { site: { id: 'site', name: 'Site', ...input, allowedRadiusMeters: 100, timezone: 'Asia/Phnom_Penh' }, schedule: { endTime: '17:00' } },
     };
-
-    attendanceService = new AttendanceService(mockPrisma as unknown as PrismaService);
+    vi.mocked(readAttendanceReplay).mockResolvedValue(null);
+    vi.mocked(readOpenAttendance).mockImplementation(async () => open);
+    vi.mocked(writeAttendance).mockImplementation(async (_db, value) => ({ record: { id: 'record', status: value.status } as any, deliveryIds: ['delivery'] }));
+    authorize.mockResolvedValue({});
+    service = new AttendanceService({} as any, {} as any, { dispatch } as any, { authorizeWorkerProject: authorize } as any, {} as any, {} as any);
   });
-
-  it('successfully checks out, calculates work duration, and closes the attendance record', async () => {
-    mockPrisma.attendanceRequest.findUnique.mockResolvedValue(null);
-    mockPrisma.attendanceRecord.findFirst.mockResolvedValue(sampleOpenRecord);
-
-    mockPrisma.attendanceRecord.update.mockResolvedValue({
-      id: 'rec-open-1',
-      status: 'COMPLETED',
-      checkOutVerification: 'VERIFIED',
-      checkOutAt: new Date(),
-      workDurationMinutes: 480,
-    });
-
-    const result = await attendanceService.checkOut(
-      worker,
-      {
-        latitude: 11.5564,
-        longitude: 104.9282,
-        accuracyMeters: 10,
-      },
-      'checkout-key-001',
-    );
-
-    expect(result.attendanceId).toBe('rec-open-1');
-    expect(result.action).toBe('CHECK_OUT');
-    expect(result.workDurationMinutes).toBe(480);
-    expect(result.verificationResult).toBe('VERIFIED');
-
-    // Verify transaction operations
-    expect(mockPrisma.attendanceRecord.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'rec-open-1' },
-      }),
-    );
-    expect(mockPrisma.attendanceEvent.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          type: 'CHECK_OUT_SUCCESS',
-          attendanceRecordId: 'rec-open-1',
-        }),
-      }),
-    );
-    expect(mockPrisma.attendanceRequest.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          action: 'CHECK_OUT',
-          idempotencyKey: 'checkout-key-001',
-        }),
-      }),
-    );
+  it('calculates duration and queues a text notification in the original project', async () => {
+    expect(await service.checkOut(worker, input, 'key')).toMatchObject({ action: 'CHECK_OUT', attendanceId: 'record', workDurationMinutes: 480, verificationResult: 'VERIFIED' });
+    expect(writeAttendance).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ recordId: 'record', organizationId: 'org', employeeId: 'worker', projectId: 'project', deliveries: [expect.objectContaining({ kind: 'TEXT', chatId: '-100' })] }));
+    expect(dispatch).toHaveBeenCalledWith('delivery', 'org');
   });
-
-  it('rejects check-out when no open attendance record exists', async () => {
-    mockPrisma.attendanceRequest.findUnique.mockResolvedValue(null);
-    mockPrisma.attendanceRecord.findFirst.mockResolvedValue(null); // No open check-in
-
-    await expect(
-      attendanceService.checkOut(
-        worker,
-        {
-          latitude: 11.5564,
-          longitude: 104.9282,
-          accuracyMeters: 10,
-        },
-        'checkout-key-002',
-      ),
-    ).rejects.toThrow(new BadRequestException('NO_OPEN_ATTENDANCE'));
+  it('rejects no open attendance without writes', async () => {
+    open = null;
+    await expect(service.checkOut(worker, input, 'key')).rejects.toThrow('NO_OPEN_ATTENDANCE');
+    expect(writeAttendance).not.toHaveBeenCalled();
   });
-
-  it('returns cached idempotent response on repeated checkout with identical key', async () => {
-    mockPrisma.attendanceRequest.findUnique.mockResolvedValue({
-      id: 'req-checkout-1',
-      attendanceRecordId: 'rec-open-1',
-      action: 'CHECK_OUT',
-    });
-
-    mockPrisma.attendanceRecord.findUnique.mockResolvedValue({
-      id: 'rec-open-1',
-      status: 'COMPLETED',
-      checkOutVerification: 'VERIFIED',
-      checkOutAt: new Date('2026-09-18T09:00:00.000Z'),
-      checkOutDistanceMeters: 5.0,
-      workDurationMinutes: 480,
-    });
-
-    const result = await attendanceService.checkOut(
-      worker,
-      {
-        latitude: 11.5564,
-        longitude: 104.9282,
-        accuracyMeters: 10,
-      },
-      'idempotency-key-repeat',
-    );
-
-    expect(result.attendanceId).toBe('rec-open-1');
-    expect(result.message).toContain('idempotent');
-    expect(mockPrisma.attendanceRecord.update).not.toHaveBeenCalled();
-    expect(mockPrisma.attendanceEvent.create).not.toHaveBeenCalled();
+  it('replays saved outcome without notifications', async () => {
+    vi.mocked(readAttendanceReplay).mockResolvedValue({ id: 'saved', status: 'COMPLETED', timestamp: new Date(), verification: 'VERIFIED', distanceMeters: 0, workDurationMinutes: 480 });
+    expect((await service.checkOut(worker, input, 'key')).attendanceId).toBe('saved');
+    expect(writeAttendance).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
+  });
+  it('persists SALES followup without awaiting reports or Telegram', async () => {
+    open.project.workMode = 'SALES'; dispatch.mockReturnValue(new Promise(() => {}));
+    await service.checkOut(worker, input, 'key');
+    expect(vi.mocked(writeAttendance).mock.calls[0][1].deliveries).toEqual([
+      expect.objectContaining({ kind: 'TEXT' }), expect.objectContaining({ kind: 'SALES_REPORT', chatId: 'tg' }),
+    ]);
+  });
+  it('does not overwrite a winning checkout', async () => {
+    vi.mocked(writeAttendance).mockResolvedValue(null);
+    await expect(service.checkOut(worker, input, 'other-key')).rejects.toThrow('ALREADY_CHECKED_OUT');
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

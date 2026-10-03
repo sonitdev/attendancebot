@@ -1,14 +1,16 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { prismaQueryTiming } from '../common/performance/prisma-query-timing.js';
+import { poolWarmupQueries, warmReadPool } from './pool-warmup.js';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
 
   constructor() {
-    super({
-      log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
-    });
+    // Prisma error events may include SQL/arguments. Request telemetry retains counts only.
+    super({ log: [] });
+    return this.$extends(prismaQueryTiming) as this;
   }
 
   async onModuleInit(): Promise<void> {
@@ -21,8 +23,21 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     try {
       await this.$connect();
       this.logger.log('Connected to PostgreSQL via Prisma.');
-    } catch (error) {
-      this.logger.error('Failed to connect to database on init', error instanceof Error ? error.stack : error);
+    } catch {
+      this.logger.error('Failed to connect to database on init.');
+      return;
+    }
+
+    const queries = poolWarmupQueries(databaseUrl, process.env.DATABASE_WARMUP_QUERIES);
+    if (queries > 0) {
+      const startedAt = performance.now();
+      try {
+        await warmReadPool(() => this.$queryRaw`SELECT 1`, queries);
+        this.logger.log(`Database startup warmup completed: ${queries} read probes in ${Math.round(performance.now() - startedAt)}ms.`);
+      } catch {
+        // Preserve the existing availability policy, without logging database URLs/errors.
+        this.logger.warn('Database startup warmup incomplete; first requests may need cold connections.');
+      }
     }
   }
 

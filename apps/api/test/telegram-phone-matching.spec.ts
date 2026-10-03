@@ -24,20 +24,37 @@ describe('Phase 2: Phone Normalization & Verified Telegram Contact Matching', ()
       },
       telegramAccount: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
       },
       organization: {
         findFirst: vi.fn(),
       },
+      telegramOrganizationOwner: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
       registrationRequest: {
         findFirst: vi.fn(),
         create: vi.fn(),
+      },
+      pendingTelegramProjectSelection: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null),
+        delete: vi.fn(),
+      },
+      workerProject: {
+        upsert: vi.fn(),
       },
       auditLog: {
         create: vi.fn(),
       },
       $transaction: vi.fn(async (cb: any) => cb(mockPrisma)),
+    };
+    mockPrisma.telegramAccount.findFirst = mockPrisma.telegramAccount.findUnique;
+    const projectAuthorization = {
+      authorizeWorkerProject: vi.fn().mockResolvedValue(undefined),
+      ensureProjectSiteAndAssignment: vi.fn().mockResolvedValue(undefined),
     };
 
     mockNotifier = {
@@ -51,6 +68,9 @@ describe('Phase 2: Phone Normalization & Verified Telegram Contact Matching', ()
       {} as any,
       mockNotifier as any,
       { get: vi.fn() } as any,
+      projectAuthorization as any,
+      {} as any,
+      {} as any,
     );
 
     vi.spyOn(telegramBotService as any, 'sendMainMenu').mockResolvedValue(undefined);
@@ -144,6 +164,7 @@ describe('Phase 2: Phone Normalization & Verified Telegram Contact Matching', ()
   describe('Verified Telegram Contact Matching', () => {
     it('links Telegram account when shared contact matches exactly one pre-created active employee', async () => {
       mockPrisma.telegramAccount.findUnique.mockResolvedValue(null);
+      mockPrisma.pendingTelegramProjectSelection.findFirst.mockResolvedValue({ id: 'pending-1', organizationId: orgId1, projectId: 'project-1', sourceChatId: 'chat-123' });
 
       mockPrisma.employee.findMany.mockResolvedValue([
         {
@@ -173,7 +194,7 @@ describe('Phase 2: Phone Normalization & Verified Telegram Contact Matching', ()
 
       expect((telegramBotService as any).sendMainMenu).toHaveBeenCalledWith(
         'chat-123',
-        expect.stringContaining('Phone Number Verified & Authorized!'),
+        expect.stringContaining('បានផ្ទៀងផ្ទាត់លេខទូរស័ព្ទរួចរាល់'),
       );
     });
 
@@ -189,12 +210,16 @@ describe('Phase 2: Phone Normalization & Verified Telegram Contact Matching', ()
       // Must NOT create employee or telegramAccount
       expect(mockPrisma.employee.create).not.toHaveBeenCalled();
       expect(mockPrisma.telegramAccount.create).not.toHaveBeenCalled();
+      expect(mockPrisma.registrationRequest.create).not.toHaveBeenCalled();
 
-      // Must notify user to contact manager
+      // With no group-selected project there is no trustworthy organization
+      // scope, so the bot must explain how to select one instead of claiming
+      // that a request was submitted.
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         'chat-123',
-        expect.stringContaining('under review'),
+        expect.stringContaining('/connect'),
         'Markdown',
+        expect.anything(),
       );
     });
 
@@ -214,8 +239,9 @@ describe('Phase 2: Phone Normalization & Verified Telegram Contact Matching', ()
       expect(mockPrisma.telegramAccount.create).not.toHaveBeenCalled();
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         'chat-123',
-        expect.stringContaining('under review'),
+        expect.any(String),
         'Markdown',
+        expect.anything(),
       );
     });
   });

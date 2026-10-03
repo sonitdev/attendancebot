@@ -1,0 +1,49 @@
+'use client';
+
+import { useEffect, useState, type ReactNode } from 'react';
+import { AlertTriangle, Camera, MapPin, PencilLine, X } from 'lucide-react';
+import { km, type AttendanceExceptionItem, type ProjectListItem } from '@workforce/contracts';
+import { adminApi } from '@/lib/api';
+import { ActionStatus, type ActionFeedback } from '@/components/ui/action-state';
+
+export default function AttendanceReviewPage() {
+  const [records, setRecords] = useState<AttendanceExceptionItem[]>([]);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const [selected, setSelected] = useState<any>(null);
+  const [correction, setCorrection] = useState<any>(null);
+  const [resolution, setResolution] = useState<any>(null);
+  const [feedback, setFeedback] = useState<ActionFeedback>(null);
+  const [processing, setProcessing] = useState(false);
+  const load = async () => {
+    try {
+      const [items, projectItems] = await Promise.all([adminApi.getExceptions(), adminApi.listProjects()]);
+      setRecords(items); setProjects(projectItems);
+    } catch (reason: any) { setFeedback({ type: 'error', message: reason.message || km.attendance.requestFailed }); }
+  };
+  useEffect(() => { void load(); }, []);
+  const openEvidence = async (id: string) => { try { setSelected(await adminApi.getAttendanceDetail(id)); } catch (reason: any) { setFeedback({ type: 'error', message: reason.message || km.attendance.requestFailed }); } };
+  const submitCorrection = async () => {
+    if (!correction?.reason?.trim() || processing) return;
+    setProcessing(true); setFeedback({ type: 'info', message: km.actions.processing });
+    try { await adminApi.createCorrection(correction.recordId, { reason: correction.reason, ...(correction.correctedProjectId ? { correctedProjectId: correction.correctedProjectId } : {}) }); await load(); setCorrection(null); setFeedback({ type: 'success', message: km.actions.correctionSubmitted }); } catch (reason: any) { setFeedback({ type: 'error', message: reason.message || km.attendance.requestFailed }); } finally { setProcessing(false); }
+  };
+  const resolveCorrection = async (approved: boolean) => {
+    if (!resolution || processing) return;
+    setProcessing(true); setFeedback({ type: 'info', message: km.actions.processing });
+    try { await adminApi.resolveCorrection(resolution.id, { approved, ...(resolution.note.trim() ? { note: resolution.note.trim() } : {}) }); await load(); setResolution(null); setFeedback({ type: 'success', message: km.actions.correctionResolved }); } catch (reason: any) { setFeedback({ type: 'error', message: reason.message || km.attendance.requestFailed }); } finally { setProcessing(false); }
+  };
+  const pendingCorrections = records.flatMap((record) => record.corrections.filter((item) => item.status === 'PENDING'));
+  return <main className="space-y-6">
+    <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-[11px] font-black text-amber-700">{km.admin.interfaceAttendance}</p><h1 className="mt-2 text-3xl font-black text-slate-950">{km.admin.attendanceTitle}</h1><p className="mt-2 max-w-2xl text-sm text-slate-600">{km.admin.attendanceSubtitle}</p></div><div className="grid size-14 place-items-center rounded-2xl bg-amber-100 text-amber-800"><AlertTriangle /></div></header>
+    <ActionStatus feedback={feedback} />
+    <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_70px_-50px_rgba(15,23,42,.45)]">
+      {records.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{km.admin.noExceptions}</p> : records.map((record) => <article key={record.id} className="grid gap-4 border-b border-slate-100 p-5 last:border-0 md:grid-cols-[1.2fr_1fr_.7fr_auto] md:items-center"><div><p className="font-black text-slate-950">{record.employee.fullName}</p><p className="text-xs font-semibold text-slate-500">{record.employee.employeeCode} · {record.project.name}</p></div><div><p className="text-sm font-bold text-slate-800">{record.site.name}</p><p className="text-xs text-slate-500">{record.attendanceDate}</p></div><span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">{record.status}</span><div className="flex gap-2"><button onClick={() => void openEvidence(record.id)} className="grid size-10 place-items-center rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50" title={km.admin.evidence}><Camera size={17}/></button><button onClick={() => setCorrection({ recordId: record.id, reason: '', correctedProjectId: '' })} className="grid size-10 place-items-center rounded-xl bg-[var(--portal-primary)] text-white" title={km.admin.correction}><PencilLine size={17}/></button></div></article>)}
+    </section>
+    {pendingCorrections.length > 0 && <section className="rounded-[28px] border border-slate-200 bg-white p-5"><h2 className="text-lg font-black text-slate-950">{km.admin.pendingCorrections}</h2><div className="mt-4 grid gap-3">{pendingCorrections.map((item) => <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-50 p-4"><div><p className="font-black text-slate-900">{item.employeeName} · {item.siteName}</p><p className="mt-1 text-xs text-slate-500">{item.reason}</p><p className="mt-1 text-xs font-bold text-emerald-800">{km.admin.proposedChange}: {item.correctedStatus || item.correctedProjectId || '—'}</p></div><button onClick={() => setResolution({ ...item, note: '' })} className="rounded-xl bg-[var(--portal-primary)] px-4 py-2 text-xs font-black text-white">{km.admin.details}</button></article>)}</div></section>}
+    {selected && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"><section className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-[30px] bg-white p-6 shadow-2xl"><div className="flex justify-between"><div><h2 className="text-xl font-black">{selected.employee.fullName}</h2><p className="text-sm text-slate-500">{selected.project?.name} · {selected.site.name}</p></div><button onClick={() => setSelected(null)}><X/></button></div>{selected.checkInPhotoUrl && <img src={selected.checkInPhotoUrl} alt={km.admin.evidence} className="mt-5 aspect-video w-full rounded-2xl object-cover"/>}<div className="mt-5 grid gap-3 sm:grid-cols-3"><Fact icon={<MapPin size={16}/>} label={km.admin.gpsEvidence} value={`${selected.checkInDistanceMeters ?? '—'}m`}/><Fact label={km.attendance.checkIn} value={selected.checkInAt ?? '—'}/><Fact label={km.attendance.checkOut} value={selected.checkOutAt ?? '—'}/></div></section></div>}
+    {correction && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"><section className="w-full max-w-lg rounded-[30px] bg-white p-6"><div className="flex justify-between"><h2 className="text-xl font-black">{km.admin.correction}</h2><button disabled={processing} onClick={() => setCorrection(null)}><X/></button></div><label className="mt-5 block text-sm font-bold">{km.admin.correctedProject}<select disabled={processing} value={correction.correctedProjectId} onChange={(e) => setCorrection({ ...correction, correctedProjectId: e.target.value })} className="mt-2 w-full rounded-xl border p-3"><option value="">—</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="mt-4 block text-sm font-bold">{km.admin.reason}<textarea disabled={processing} value={correction.reason} onChange={(e) => setCorrection({ ...correction, reason: e.target.value })} className="mt-2 w-full rounded-xl border p-3" rows={4}/></label><button disabled={processing || !correction.reason.trim()} onClick={() => void submitCorrection()} className="mt-5 w-full rounded-xl bg-[var(--portal-primary)] py-3 font-black text-white disabled:bg-slate-300">{processing ? km.actions.processing : km.admin.submitCorrection}</button></section></div>}
+    {resolution && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"><section className="w-full max-w-lg rounded-[30px] bg-white p-6"><div className="flex justify-between"><div><h2 className="text-xl font-black">{km.admin.proposedChange}</h2><p className="mt-1 text-sm text-slate-500">{resolution.employeeName} · {resolution.attendanceDate}</p></div><button disabled={processing} onClick={() => setResolution(null)}><X/></button></div><div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm"><p className="font-bold">{resolution.reason}</p><p className="mt-2 text-slate-600">{resolution.originalStatus} → {resolution.correctedStatus || resolution.originalStatus}</p></div><label className="mt-4 block text-sm font-bold">{km.admin.resolutionNote}<textarea disabled={processing} value={resolution.note} onChange={(e) => setResolution({ ...resolution, note: e.target.value })} className="mt-2 w-full rounded-xl border p-3" rows={3}/></label><div className="mt-5 grid grid-cols-2 gap-2"><button disabled={processing} onClick={() => void resolveCorrection(false)} className="rounded-xl border border-rose-200 bg-rose-50 py-3 font-black text-rose-800 disabled:opacity-50">{processing ? km.actions.processing : km.admin.reject}</button><button disabled={processing} onClick={() => void resolveCorrection(true)} className="rounded-xl bg-[var(--portal-primary)] py-3 font-black text-white disabled:opacity-50">{processing ? km.actions.processing : km.admin.approve}</button></div></section></div>}
+  </main>;
+}
+
+function Fact({ icon, label, value }: { icon?: ReactNode; label: string; value: string }) { return <div className="rounded-2xl bg-slate-50 p-4"><p className="flex items-center gap-1 text-xs font-bold text-slate-500">{icon}{label}</p><p className="mt-2 break-words text-sm font-black text-slate-900">{value}</p></div>; }

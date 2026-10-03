@@ -51,7 +51,7 @@ export function BrandRail() {
 
       {/* Stepper progress timeline with dashed connector lines 1, 2, 3 */}
       <div className="mt-4">
-        <p className="mb-4 text-[11px] font-bold tracking-wider uppercase text-[#c4d701]">
+        <p className="mb-4 text-[11px] font-bold uppercase text-[#c4d701]">
           Sign-in protocol
         </p>
         <div className="flex flex-col">

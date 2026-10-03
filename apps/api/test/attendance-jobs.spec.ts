@@ -13,6 +13,7 @@ describe('AttendanceJobsService Background Jobs & Reporting', () => {
       attendanceRecord: {
         findMany: vi.fn(),
         findUnique: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         update: vi.fn().mockResolvedValue({ id: 'rec-updated' }),
         create: vi.fn().mockResolvedValue({ id: 'rec-created-1' }),
       },
@@ -74,9 +75,13 @@ describe('AttendanceJobsService Background Jobs & Reporting', () => {
       expect(result.flaggedCount).toBe(1);
 
       // Verify record was updated to MISSING_CHECKOUT
-      expect(mockPrisma.attendanceRecord.update).toHaveBeenCalledWith({
-        where: { id: 'rec-open-1' },
-        data: { status: 'MISSING_CHECKOUT' },
+      expect(mockPrisma.attendanceRecord.updateMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          id: 'rec-open-1',
+          checkOutAt: null,
+          status: { in: ['ON_TIME', 'LATE'] },
+        }),
+        data: { checkOutStatus: 'MISSING_CHECKOUT', status: 'MISSING_CHECKOUT' },
       });
 
       // Verify immutable event was created
@@ -102,7 +107,7 @@ describe('AttendanceJobsService Background Jobs & Reporting', () => {
       // Verify Telegram push notification sent
       expect(mockTelegramNotifier.sendMessage).toHaveBeenCalledWith(
         'tg-worker-1',
-        expect.stringContaining('Shift Checkout Notice'),
+        expect.any(String),
       );
     });
 

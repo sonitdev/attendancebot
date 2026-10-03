@@ -40,6 +40,8 @@ describe('AnalyticsService - Cross-Project Performance and History', () => {
           },
         },
       },
+      project: { id: 'prj-tower', code: 'PRJ-TOWER', name: 'Riverside Tower' },
+      site: { id: 'site-alpha', name: 'Alpha Site 1', timezone: 'Asia/Phnom_Penh', allowedRadiusMeters: 100 },
     },
     {
       id: 'rec-2',
@@ -60,6 +62,8 @@ describe('AnalyticsService - Cross-Project Performance and History', () => {
           },
         },
       },
+      project: { id: 'prj-tower', code: 'PRJ-TOWER', name: 'Riverside Tower' },
+      site: { id: 'site-alpha', name: 'Alpha Site 1', timezone: 'Asia/Phnom_Penh', allowedRadiusMeters: 100 },
     },
     {
       id: 'rec-3',
@@ -80,6 +84,8 @@ describe('AnalyticsService - Cross-Project Performance and History', () => {
           },
         },
       },
+      project: { id: 'prj-bridge', code: 'PRJ-BRIDGE', name: 'Chroy Changvar Bridge' },
+      site: { id: 'site-bridge', name: 'Bridge Pier 4', timezone: 'Asia/Phnom_Penh', allowedRadiusMeters: 100 },
     },
   ];
 

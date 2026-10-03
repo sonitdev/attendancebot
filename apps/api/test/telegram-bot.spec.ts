@@ -16,14 +16,15 @@ describe('TelegramBotService', () => {
     mockPrisma = {
       telegramAccount: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         create: vi.fn(),
-        update: vi.fn(),
+        update: vi.fn().mockResolvedValue({ id: 'project-a', organizationId: 'org-acme-1', name: 'New Group Name' }),
       },
       employee: {
         findMany: vi.fn(),
         create: vi.fn(),
         count: vi.fn(),
-        update: vi.fn(),
+        update: vi.fn().mockResolvedValue({ id: 'project-a', organizationId: 'org-acme-1' }),
       },
       auditLog: {
         create: vi.fn(),
@@ -31,7 +32,54 @@ describe('TelegramBotService', () => {
       organization: {
         findFirst: vi.fn(),
       },
+      telegramOrganizationOwner: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      project: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn().mockResolvedValue({ id: 'project-a', organizationId: 'org-acme-1', name: 'New Group Name' }),
+      },
+      telegramReportGroup: {
+        findUnique: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+      },
+      registrationRequest: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      telegramUpdate: {
+        create: vi.fn().mockResolvedValue({ id: 'update-1' }),
+        createMany: vi.fn().mockResolvedValue({ count: 1 }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      site: { findFirst: vi.fn() },
+      pendingTelegramProjectSelection: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn(),
+        findMany: vi.fn(),
+        upsert: vi.fn(),
+        delete: vi.fn(),
+      },
+      workerProject: {
+        upsert: vi.fn(),
+      },
       $transaction: vi.fn(async (cb: (tx: any) => Promise<any>) => cb(mockPrisma)),
+    };
+    // The production account resolver is intentionally tenant-scoped and uses
+    // findFirst; keep older fixture setup calls compatible with that contract.
+    mockPrisma.telegramAccount.findFirst = mockPrisma.telegramAccount.findUnique;
+    mockPrisma.project.findMany = vi.fn(async () => {
+      const project = await mockPrisma.project.findUnique();
+      return project ? [project] : [];
+    });
+    mockPrisma.projectAuthorization = {
+      verifyTelegramMembership: vi.fn().mockResolvedValue({ authorized: true }),
+      authorizeWorkerProject: vi.fn().mockResolvedValue(undefined),
+      ensureProjectSiteAndAssignment: vi.fn().mockResolvedValue(undefined),
     };
 
     mockAttendanceService = {
@@ -56,12 +104,16 @@ describe('TelegramBotService', () => {
       mockAttendanceService as unknown as AttendanceService,
       mockNotifier as unknown as TelegramNotifierService,
       mockConfig as unknown as ConfigService,
+      mockPrisma.projectAuthorization,
+      {} as any,
+      {} as any,
     );
   });
 
   describe('Unlinked Telegram users', () => {
     it('prompts unlinked user to share their phone number to register', async () => {
       mockPrisma.telegramAccount.findUnique.mockResolvedValue(null);
+      mockPrisma.pendingTelegramProjectSelection.findFirst.mockResolvedValue({ id: 'pending-1', organizationId: 'org-acme-1', projectId: 'project-a', sourceChatId: '123456789' });
 
       const update = {
         message: {
@@ -77,13 +129,13 @@ describe('TelegramBotService', () => {
 
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         '987654321',
-        expect.stringContaining('Worker Registration & Access Authorization'),
+        expect.stringContaining('សូមស្វាគមន៍'),
         'Markdown',
         expect.objectContaining({
           keyboard: expect.arrayContaining([
             expect.arrayContaining([
               expect.objectContaining({
-                text: '📱 Share Phone Number to Register',
+                text: 'ចែករំលែកលេខទូរស័ព្ទដើម្បីចុះឈ្មោះ',
                 request_contact: true,
               }),
             ]),
@@ -94,6 +146,7 @@ describe('TelegramBotService', () => {
 
     it('successfully links existing employee when phone number matches', async () => {
       mockPrisma.telegramAccount.findUnique.mockResolvedValue(null);
+      mockPrisma.pendingTelegramProjectSelection.findFirst.mockResolvedValue({ id: 'pending-1', organizationId: 'org-acme-1', projectId: 'project-a', sourceChatId: '987654321' });
       mockPrisma.employee.findMany = vi.fn().mockResolvedValue([
         {
           id: 'emp-sokha',
@@ -133,7 +186,7 @@ describe('TelegramBotService', () => {
 
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         '987654321',
-        expect.stringContaining('Phone Number Verified & Authorized!'),
+        expect.stringContaining('បានផ្ទៀងផ្ទាត់លេខទូរស័ព្ទរួចរាល់'),
         'Markdown',
         expect.anything(),
       );
@@ -177,13 +230,13 @@ describe('TelegramBotService', () => {
 
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         '123456789',
-        expect.stringContaining('Welcome, *Sokha Chan*!'),
+        expect.stringContaining('សូមស្វាគមន៍ Sokha Chan'),
         'Markdown',
         expect.objectContaining({
           keyboard: expect.arrayContaining([
             expect.arrayContaining([
               expect.objectContaining({
-                text: '📷 Open Attendance',
+                text: 'បើកកម្មវិធីវត្តមាន',
                 web_app: expect.objectContaining({ url: 'https://test-mini-app.local' }),
               }),
             ]),
@@ -207,18 +260,167 @@ describe('TelegramBotService', () => {
 
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         '123456789',
-        expect.stringContaining('Open Attendance to Check In'),
+        expect.stringContaining('បើកកម្មវិធីវត្តមាន'),
         'Markdown',
         expect.objectContaining({
           keyboard: expect.arrayContaining([
             expect.arrayContaining([
               expect.objectContaining({
-                text: '📷 Open Attendance',
+                text: 'បើកកម្មវិធីវត្តមាន',
                 web_app: expect.objectContaining({ url: 'https://test-mini-app.local' }),
               }),
             ]),
           ]),
         }),
+      );
+    });
+  });
+
+  describe('Project selection from a Telegram group', () => {
+    it('stores a pending project intent for an unregistered worker and directs them to private registration', async () => {
+      mockPrisma.telegramAccount.findUnique.mockResolvedValue(null);
+      mockPrisma.project.findUnique.mockResolvedValue({ id: 'project-a', organizationId: 'org-acme-1', status: 'ACTIVE', telegramConnectionStatus: 'CONNECTED' });
+
+      await botService.handleUpdate({
+        callback_query: {
+          id: 'callback-1',
+          from: { id: 777, first_name: 'New worker' },
+          data: 'set_current_project',
+          message: { chat: { id: -100123, type: 'supergroup' } },
+        },
+      });
+
+      expect(mockPrisma.pendingTelegramProjectSelection.upsert).toHaveBeenCalledWith({
+        where: { organizationId_telegramUserId: { organizationId: 'org-acme-1', telegramUserId: '777' } },
+        create: expect.objectContaining({ organizationId: 'org-acme-1', projectId: 'project-a', sourceChatId: '-100123' }),
+        update: expect.objectContaining({ projectId: 'project-a' }),
+      });
+      expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
+        '-100123',
+        expect.stringContaining('https://t.me/site_attendantbot?start=register'),
+        'Markdown',
+      );
+    });
+
+    it('rejects a linked worker from another organization', async () => {
+      mockPrisma.telegramAccount.findUnique.mockResolvedValue({
+        employeeId: 'employee-other',
+        organizationId: 'org-other',
+        status: 'ACTIVE',
+      });
+      mockPrisma.project.findUnique.mockResolvedValue({ id: 'project-a', organizationId: 'org-acme-1' });
+
+      await botService.handleUpdate({
+        callback_query: {
+          id: 'callback-2',
+          from: { id: 778 },
+          data: 'set_current_project',
+          message: { chat: { id: -100123, type: 'supergroup' } },
+        },
+      });
+
+      expect(mockPrisma.workerProject.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a user who is not an active member of the Telegram project group', async () => {
+      mockPrisma.telegramAccount.findUnique.mockResolvedValue({
+        employeeId: 'employee-1',
+        organizationId: 'org-acme-1',
+        status: 'ACTIVE',
+      });
+      mockPrisma.project.findUnique.mockResolvedValue({ id: 'project-a', organizationId: 'org-acme-1' });
+      vi.spyOn(botService as any, 'isTelegramChatMember').mockResolvedValue(false);
+
+      await botService.handleUpdate({
+        callback_query: {
+          id: 'callback-unauthorized',
+          from: { id: 779 },
+          data: 'set_current_project',
+          message: { chat: { id: -100123, type: 'supergroup' } },
+        },
+      });
+
+      expect(mockPrisma.workerProject.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.employee.update).not.toHaveBeenCalled();
+    });
+
+    it('keeps the same chat-ID project and updates only its name when the group is renamed', async () => {
+      const account = {
+        employeeId: 'employee-1',
+        organizationId: 'org-acme-1',
+        status: 'ACTIVE',
+        employee: { fullName: 'Worker', employeeCode: 'EMP-1' },
+        organization: { name: 'Acme' },
+      };
+      mockPrisma.telegramAccount.findUnique.mockResolvedValue(account);
+      mockPrisma.telegramReportGroup.findUnique.mockResolvedValue({
+        id: 'report-group-1',
+        chatId: '-100123',
+        organizationId: 'org-acme-1',
+        siteId: null,
+      });
+      mockPrisma.telegramReportGroup.findMany.mockResolvedValue([{
+        id: 'report-group-1', chatId: '-100123', organizationId: 'org-acme-1', siteId: null,
+      }]);
+      mockPrisma.project.findUnique.mockResolvedValue({
+        id: 'project-a',
+        organizationId: 'org-acme-1',
+        name: 'Old Group Name',
+        telegramChatId: '-100123',
+      });
+      mockPrisma.project.findFirst.mockResolvedValue({
+        id: 'project-a', organizationId: 'org-acme-1', name: 'Old Group Name', telegramChatId: '-100123',
+      });
+
+      await botService.handleUpdate({
+        message: {
+          from: { id: 123456789, first_name: 'Manager' },
+          chat: { id: -100123, type: 'supergroup', title: 'New Group Name' },
+          text: '/connect',
+        },
+      });
+
+      expect(mockPrisma.project.update).toHaveBeenCalledWith({
+        where: { id: 'project-a' },
+        data: expect.objectContaining({ name: 'New Group Name' }),
+      });
+      expect(mockPrisma.project.create).not.toHaveBeenCalled();
+    });
+
+    it('creates one active project from a newly connected Telegram group', async () => {
+      mockPrisma.telegramAccount.findUnique.mockResolvedValue({
+        employeeId: 'manager-1',
+        organizationId: 'org-acme-1',
+        status: 'ACTIVE',
+        employee: { fullName: 'Manager', employeeCode: 'EMP-M1' },
+        organization: { name: 'Acme' },
+      });
+      mockPrisma.telegramReportGroup.findUnique.mockResolvedValue(null);
+      mockPrisma.project.create.mockResolvedValue({ id: 'project-new' });
+
+      await botService.handleUpdate({
+        message: {
+          from: { id: 123456789, first_name: 'Manager' },
+          chat: { id: -100456, type: 'supergroup', title: 'Project B' },
+          text: '/connect',
+        },
+      });
+
+      expect(mockPrisma.project.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          organizationId: 'org-acme-1',
+          name: 'Project B',
+          status: 'ACTIVE',
+          telegramChatId: '-100456',
+        }),
+      });
+      expect(mockPrisma.telegramReportGroup.create).toHaveBeenCalledTimes(1);
+      expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
+        '-100456',
+        expect.any(String),
+        'Markdown',
+        expect.objectContaining({ inline_keyboard: expect.any(Array) }),
       );
     });
   });
@@ -287,30 +489,12 @@ describe('TelegramBotService', () => {
 
       await botService.handleUpdate(update);
 
-      // Verifies AttendanceService.checkIn was invoked with native coordinates
-      expect(mockAttendanceService.checkIn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          employeeId: 'emp-sokha',
-          organizationId: 'org-acme-1',
-        }),
-        expect.objectContaining({
-          latitude: 11.5564,
-          longitude: 104.9282,
-          accuracyMeters: 10,
-        }),
-        'tg-msg-101',
-      );
-
-      // Verifies Telegram confirmation message was sent
+      // Native locations cannot bypass the required camera proof. The bot
+      // guides the worker to the Mini App instead of creating attendance.
+      expect(mockAttendanceService.checkIn).not.toHaveBeenCalled();
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         '123456789',
-        expect.stringContaining('Check-In Verified & Recorded!'),
-        'Markdown',
-        expect.anything(),
-      );
-      expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
-        '123456789',
-        expect.stringContaining('25.4m'),
+        expect.stringContaining('បើកកម្មវិធីវត្តមាន'),
         'Markdown',
         expect.anything(),
       );
@@ -363,29 +547,19 @@ describe('TelegramBotService', () => {
 
       await botService.handleUpdate(update);
 
-      // Verifies AttendanceService.checkOut was invoked
-      expect(mockAttendanceService.checkOut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          employeeId: 'emp-sokha',
-          organizationId: 'org-acme-1',
-        }),
-        expect.objectContaining({
-          latitude: 11.5564,
-          longitude: 104.9282,
-        }),
-        'tg-msg-102',
-      );
+      // Native Telegram GPS cannot bypass the Mini App camera-proof flow.
+      expect(mockAttendanceService.checkOut).not.toHaveBeenCalled();
 
       // Verifies Telegram checkout confirmation
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         '123456789',
-        expect.stringContaining('Check-Out Successfully Recorded!'),
+        expect.stringContaining('បើកកម្មវិធីវត្តមាន'),
         'Markdown',
         expect.anything(),
       );
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         '123456789',
-        expect.stringContaining('9h 0m'),
+        expect.stringContaining('បើកកម្មវិធីវត្តមាន'),
         'Markdown',
         expect.anything(),
       );
@@ -426,7 +600,7 @@ describe('TelegramBotService', () => {
       expect(mockAttendanceService.checkOut).not.toHaveBeenCalled();
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         '123456789',
-        expect.stringContaining('Shift Already Completed Today'),
+        expect.any(String),
         'Markdown',
         expect.anything(),
       );

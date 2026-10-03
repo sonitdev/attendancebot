@@ -34,6 +34,7 @@ describe('Admin Attendance and Setup Services', () => {
       },
       telegramAccount: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         create: vi.fn(),
       },
       attendanceRecord: {
@@ -139,6 +140,8 @@ describe('Admin Attendance and Setup Services', () => {
             site: { id: 'site-1', name: 'Site A' },
             schedule: { id: 'sch-1', name: 'Day Shift' },
           },
+          site: { id: 'site-1', name: 'Site A', projectId: 'project-1', timezone: 'Asia/Phnom_Penh', allowedRadiusMeters: 100 },
+          project: { id: 'project-1', code: 'PRJ-1', name: 'Project One', workMode: 'SITE' },
           attendanceDate: new Date('2026-09-18T00:00:00.000Z'),
           checkInAt: new Date('2026-09-18T01:00:00.000Z'),
           checkOutAt: new Date('2026-09-18T09:00:00.000Z'),
@@ -179,6 +182,11 @@ describe('Admin Attendance and Setup Services', () => {
           },
           schedule: { id: 'sch-1', name: 'Day Shift', startTime: '08:00', endTime: '17:00' },
         },
+        site: {
+          id: 'site-1', name: 'Site A', latitude: 11.5564, longitude: 104.9282,
+          allowedRadiusMeters: 100, timezone: 'Asia/Phnom_Penh',
+        },
+        project: { id: 'project-1', code: 'PRJ-1', name: 'Project One', workMode: 'SITE' },
         attendanceDate: new Date('2026-09-18T00:00:00.000Z'),
         checkInAt: new Date('2026-09-18T01:00:00.000Z'),
         checkOutAt: null,

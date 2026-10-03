@@ -22,6 +22,9 @@ describe('Registration Requests & Manager Approval Workflow', () => {
         create: vi.fn(),
         update: vi.fn(),
       },
+      organization: {
+        findUnique: vi.fn().mockResolvedValue({ id: orgId1, name: 'Acme Organization' }),
+      },
       employee: {
         findUnique: vi.fn(),
         create: vi.fn(),
@@ -36,6 +39,14 @@ describe('Registration Requests & Manager Approval Workflow', () => {
       auditLog: {
         create: vi.fn(),
       },
+      pendingTelegramProjectSelection: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null),
+        delete: vi.fn(),
+      },
+      workerProject: {
+        upsert: vi.fn(),
+      },
       $transaction: vi.fn(async (cb: any) => cb(mockPrisma)),
     };
 
@@ -46,6 +57,7 @@ describe('Registration Requests & Manager Approval Workflow', () => {
     registrationRequestsService = new RegistrationRequestsService(
       mockPrisma as unknown as PrismaService,
       mockNotifier as unknown as TelegramNotifierService,
+      { authorizeWorkerProject: vi.fn().mockResolvedValue({ authorizationStatus: 'AUTHORIZED' }) } as any,
     );
     registrationRequestsController = new RegistrationRequestsController(registrationRequestsService);
   });
@@ -107,6 +119,13 @@ describe('Registration Requests & Manager Approval Workflow', () => {
         employeeCode: 'EMP-101',
         fullName: 'Sok Dara',
       });
+      mockPrisma.pendingTelegramProjectSelection.findFirst.mockResolvedValue({
+        id: 'pending-project-1',
+        organizationId: orgId1,
+        telegramUserId: 'tg-101',
+        projectId: 'project-a',
+        sourceChatId: '-1001',
+      });
 
       mockPrisma.registrationRequest.update.mockResolvedValue({
         id: requestId,
@@ -147,6 +166,19 @@ describe('Registration Requests & Manager Approval Workflow', () => {
         }),
       });
 
+      expect(mockPrisma.workerProject.upsert).toHaveBeenCalledWith({
+        where: { employeeId_projectId: { employeeId: 'emp-999', projectId: 'project-a' } },
+        create: expect.objectContaining({ employeeId: 'emp-999', projectId: 'project-a' }),
+        update: expect.objectContaining({ lastSelectedAt: expect.any(Date) }),
+      });
+      expect(mockPrisma.employee.update).toHaveBeenCalledWith({
+        where: { id: 'emp-999' },
+        data: { currentProjectId: 'project-a' },
+      });
+      expect(mockPrisma.pendingTelegramProjectSelection.delete).toHaveBeenCalledWith({
+        where: { id: 'pending-project-1' },
+      });
+
       // 3. Appends position history
       expect(mockPrisma.employeePositionHistory.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -178,8 +210,11 @@ describe('Registration Requests & Manager Approval Workflow', () => {
       // 6. Sends Telegram approval notification to worker
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         'tg-101',
-        expect.stringContaining('Registration Approved'),
+        expect.stringContaining('Sok Dara'),
         'Markdown',
+        expect.objectContaining({
+          inline_keyboard: expect.any(Array),
+        }),
       );
 
       expect(res.status).toBe('APPROVED');
@@ -218,7 +253,7 @@ describe('Registration Requests & Manager Approval Workflow', () => {
 
       expect(mockNotifier.sendMessage).toHaveBeenCalledWith(
         'tg-102',
-        expect.stringContaining('Registration Request Update'),
+        expect.stringContaining('Phone number not in corporate registry'),
         'Markdown',
       );
     });

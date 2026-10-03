@@ -197,8 +197,8 @@ describe('CorrectionService', () => {
       expect(mockPrisma.attendanceRecord.update).toHaveBeenCalledWith({
         where: { id: 'rec-123' },
         data: expect.objectContaining({
-          status: 'COMPLETED',
-          checkOutAt: pendingCorrection.correctedCheckOutAt,
+          adjustedStatus: 'COMPLETED',
+          adjustedCheckOutAt: pendingCorrection.correctedCheckOutAt,
           workDurationMinutes: 540, // 9 hours = 540 minutes
         }),
       });
@@ -330,6 +330,8 @@ describe('CorrectionService', () => {
               endTime: '17:00',
             },
           },
+          site: { name: 'Main Construction Site A', timezone: 'Asia/Phnom_Penh' },
+          project: { code: 'PRJ-ALPHA', name: 'Alpha Tower' },
           corrections: [{ id: 'c-1' }],
         },
       ]);

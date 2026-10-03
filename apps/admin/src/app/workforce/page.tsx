@@ -2,8 +2,9 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
-import { adminApi, getCachedApiData } from '@/lib/api';
+import { adminApi } from '@/lib/api';
+import { km } from '@workforce/contracts';
+import { useLocale } from '@/lib/locale-context';
 import type {
   AssignmentListItem,
   EmployeeListItem,
@@ -38,17 +39,26 @@ import {
   Check,
   Ban,
   Filter,
-  ChevronDown,
 } from 'lucide-react';
 
 import { useSearchParams } from 'next/navigation';
 import { Modal } from '@/components/ui/modal';
+import { ActionStatus, ConfirmActionDialog, type ActionFeedback } from '@/components/ui/action-state';
+import { useWorkforceData } from './use-workforce-data';
+import { WorkforcePageHeader } from './workforce-page-header';
+import { EmployeeDirectoryControls } from './employee-directory-controls';
+import { AssignmentWorkerList } from './assignment-worker-list';
+import { ProjectSiteControls } from './project-site-controls';
+import { WorkforceSectionHeading } from './workforce-section-heading';
+import { AssignmentTable } from './assignment-table';
+import { CreateEmployeeModal } from './create-employee-modal';
 
 const SiteLocationPicker = dynamic(() => import('@/components/sites/site-location-picker'), { ssr: false });
 
 type Tab = 'employees' | 'positions' | 'worker-groups' | 'position-requests' | 'projects-sites' | 'assignments';
 
 function WorkforcePageContent() {
+  const { locale, t, isKm } = useLocale();
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get('tab');
   const queryTab: Tab = requestedTab === 'projects-sites' || requestedTab === 'assignments'
@@ -61,19 +71,13 @@ function WorkforcePageContent() {
       setActiveTab(queryTab);
     }
   }, [queryTab]);
-  const [employees, setEmployees] = useState<EmployeeListItem[]>(() => getCachedApiData<EmployeeListItem[]>('/employees') || []);
-  const [projects, setProjects] = useState<ProjectListItem[]>(() => getCachedApiData<ProjectListItem[]>('/projects') || []);
+  const {
+    employees, setEmployees, projects, setProjects, sites, setSites, schedules, setSchedules,
+    assignments, setAssignments, positions, setPositions, positionRequests, setPositionRequests,
+    registrationRequests, setRegistrationRequests, workerGroups, setWorkerGroups,
+    isLoading, error, setError, loadAllData, lastSuccessMessage,
+  } = useWorkforceData(activeTab);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [sites, setSites] = useState<SiteListItem[]>(() => getCachedApiData<SiteListItem[]>('/sites') || []);
-  const [schedules, setSchedules] = useState<WorkScheduleListItem[]>(() => getCachedApiData<WorkScheduleListItem[]>('/schedules') || []);
-  const [assignments, setAssignments] = useState<AssignmentListItem[]>(() => getCachedApiData<AssignmentListItem[]>('/assignments') || []);
-  const [positions, setPositions] = useState<PositionListItem[]>(() => getCachedApiData<PositionListItem[]>('/positions') || []);
-  const [positionRequests, setPositionRequests] = useState<PositionRequestListItem[]>(() => getCachedApiData<PositionRequestListItem[]>('/position-requests') || []);
-  const [registrationRequests, setRegistrationRequests] = useState<RegistrationRequestListItem[]>(() => getCachedApiData<RegistrationRequestListItem[]>('/registration-requests') || []);
-  const [workerGroups, setWorkerGroups] = useState<WorkerGroupListItem[]>(() => getCachedApiData<WorkerGroupListItem[]>('/worker-groups') || []);
-
-  const [isLoading, setIsLoading] = useState<boolean>(() => !getCachedApiData('/employees'));
-  const [error, setError] = useState<string | null>(null);
 
   // Directory Filters & Multi-select
   const [searchQuery, setSearchQuery] = useState('');
@@ -179,50 +183,8 @@ function WorkforcePageContent() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-
-  const loadAllData = async (showFullLoading = false) => {
-    if (showFullLoading) setIsLoading(true);
-    setError(null);
-    try {
-      const [empData, prjData, siteData, schData, assignData, posData, reqData, regReqData, grpData] = await Promise.all([
-        adminApi.listEmployees(),
-        adminApi.listProjects(),
-        adminApi.listSites(),
-        adminApi.listSchedules(),
-        adminApi.listAssignments(),
-        adminApi.listPositions(),
-        adminApi.listPositionRequests(),
-        adminApi.listRegistrationRequests(),
-        adminApi.listWorkerGroups(),
-      ]);
-      setEmployees(empData || []);
-      setProjects(prjData || []);
-      setSites(siteData || []);
-      setSchedules(schData || []);
-      setAssignments(assignData || []);
-      setPositions(posData || []);
-      setPositionRequests(reqData || []);
-      setRegistrationRequests(regReqData || []);
-      setWorkerGroups(grpData || []);
-
-      if (prjData?.length) {
-        setSelectedProjectId((prev) => prev || prjData[0].id);
-        if (!siteProjectId) setSiteProjectId(prjData[0].id);
-      }
-      if (empData?.length && !assignEmpId) setAssignEmpId(empData[0].id);
-      if (siteData?.length && !assignSiteId) {
-        setAssignSiteId(siteData[0].id);
-      }
-      if (schData?.length && !assignSchId) {
-        setAssignSchId(schData[0].id);
-      }
-      if (posData?.length && !assignPosId) setAssignPosId(posData[0].id);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load workforce records');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const [actionFeedback, setActionFeedback] = useState<ActionFeedback>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<{ run: () => Promise<void> } | null>(null);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || projects[0] || null;
   const projectSites = selectedProject
@@ -230,8 +192,19 @@ function WorkforcePageContent() {
     : [];
 
   useEffect(() => {
-    loadAllData(true);
-  }, []);
+    if (lastSuccessMessage) setActionFeedback({ type: 'success', message: lastSuccessMessage });
+  }, [lastSuccessMessage]);
+
+  useEffect(() => {
+    if (projects.length) {
+      setSelectedProjectId((prev) => prev || projects[0].id);
+      if (!siteProjectId) setSiteProjectId(projects[0].id);
+    }
+    if (employees.length && !assignEmpId) setAssignEmpId(employees[0].id);
+    if (sites.length && !assignSiteId) setAssignSiteId(sites[0].id);
+    if (schedules.length && !assignSchId) setAssignSchId(schedules[0].id);
+    if (positions.length && !assignPosId) setAssignPosId(positions[0].id);
+  }, [projects, employees, sites, schedules, positions, siteProjectId, assignEmpId, assignSiteId, assignSchId, assignPosId]);
 
   const pendingRequestsCount =
     positionRequests.filter((r) => r.status === 'PENDING').length +
@@ -259,24 +232,39 @@ function WorkforcePageContent() {
 
   function parseMapsLocation(input: string): { lat?: number; lng?: number } | null {
     if (!input) return null;
-    const cleaned = input.replace(/[\u2010-\u2015\u2212]/g, '-').trim();
+    let decoded = input.trim();
+    try {
+      decoded = decodeURIComponent(input).replace(/[\u2010-\u2015\u2212]/g, '-').trim();
+    } catch {
+      decoded = input.replace(/[\u2010-\u2015\u2212]/g, '-').trim();
+    }
 
-    const atMatch = cleaned.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    // 1. Google Maps data parameters: !3d11.5564!4d104.9282
+    const data3dMatch = decoded.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+    if (data3dMatch) {
+      return { lat: parseFloat(data3dMatch[1]), lng: parseFloat(data3dMatch[2]) };
+    }
+
+    // 2. Center coordinates: @11.5564,104.9282
+    const atMatch = decoded.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
     if (atMatch) {
       return { lat: parseFloat(atMatch[1]), lng: parseFloat(atMatch[2]) };
     }
 
-    const queryMatch = cleaned.match(/[?&](?:q|ll|place|dir\/|loc:)=(-?\d+\.\d+)(?:,|\+|\s+)(-?\d+\.\d+)/);
+    // 3. Query string coordinates: ?q=11.5564,104.9282, ll=..., loc:..., query=...
+    const queryMatch = decoded.match(/[?&](?:q|ll|place|dir\/|loc:|query)=(-?\d+\.\d+)(?:,|\+|%2C|\s+)(-?\d+\.\d+)/i);
     if (queryMatch) {
       return { lat: parseFloat(queryMatch[1]), lng: parseFloat(queryMatch[2]) };
     }
 
-    const placeMatch = cleaned.match(/place\/(-?\d+\.\d+)(?:,|\+|\s+)(-?\d+\.\d+)/);
+    // 4. Place URL path: /place/11.5564,104.9282
+    const placeMatch = decoded.match(/(?:\/place\/|place\/)(-?\d+\.\d+)(?:,|\+|%2C|\s+)(-?\d+\.\d+)/i);
     if (placeMatch) {
       return { lat: parseFloat(placeMatch[1]), lng: parseFloat(placeMatch[2]) };
     }
 
-    const rawPairMatch = cleaned.match(/(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)/);
+    // 5. Raw coordinate pair: 11.5564, 104.9282 or 11.5564 104.9282
+    const rawPairMatch = decoded.match(/(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)/);
     if (rawPairMatch) {
       const lat = parseFloat(rawPairMatch[1]);
       const lng = parseFloat(rawPairMatch[2]);
@@ -297,6 +285,7 @@ function WorkforcePageContent() {
 
   const handleMapPointChange = ({ latitude, longitude }: { latitude: number; longitude: number }) => {
     applyCoordinates(latitude, longitude, 'Pin adjusted');
+    setPastedMapUrl(`https://maps.google.com/?q=${latitude.toFixed(6)},${longitude.toFixed(6)}`);
   };
 
   const resolveMapUrl = async (url: string) => {
@@ -320,8 +309,14 @@ function WorkforcePageContent() {
     const parsed = parseMapsLocation(val);
     if (parsed && parsed.lat !== undefined && parsed.lng !== undefined) {
       applyCoordinates(parsed.lat, parsed.lng, 'Coordinates extracted');
-    } else if (/^https:\/\//i.test(val.trim())) {
-      mapResolveTimer.current = setTimeout(() => void resolveMapUrl(val), 450);
+    } else {
+      const trimmed = val.trim();
+      const isHttp = /^https?:\/\//i.test(trimmed);
+      const isGoogleShort = /^(?:maps\.app\.goo\.gl|goo\.gl\/maps|maps\.google\.com)/i.test(trimmed);
+      if (isHttp || isGoogleShort) {
+        const fullUrl = isHttp ? trimmed : `https://${trimmed}`;
+        mapResolveTimer.current = setTimeout(() => void resolveMapUrl(fullUrl), 450);
+      }
     }
   };
 
@@ -337,6 +332,7 @@ function WorkforcePageContent() {
         const lat = Math.round(pos.coords.latitude * 1000000) / 1000000;
         const lng = Math.round(pos.coords.longitude * 1000000) / 1000000;
         applyCoordinates(lat, lng, 'Current device location detected');
+        setPastedMapUrl(`https://maps.google.com/?q=${lat.toFixed(6)},${lng.toFixed(6)}`);
         setGeoLoading(false);
       },
       (err) => {
@@ -364,7 +360,7 @@ function WorkforcePageContent() {
       setEmpName('');
       setEmpPhone('');
       setEmpTitle('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to create employee');
     } finally {
@@ -387,7 +383,7 @@ function WorkforcePageContent() {
       setSelectedEmployee(null);
       setTgUserId('');
       setTgUsername('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to link Telegram account');
     } finally {
@@ -409,7 +405,7 @@ function WorkforcePageContent() {
       setPosCode('');
       setPosName('');
       setPosDesc('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to create position');
     } finally {
@@ -430,7 +426,7 @@ function WorkforcePageContent() {
       });
       setModalType(null);
       setEditingPosition(null);
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to update position');
     } finally {
@@ -450,7 +446,7 @@ function WorkforcePageContent() {
       });
       setModalType(null);
       setSelectedEmployee(null);
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to assign position');
     } finally {
@@ -466,7 +462,7 @@ function WorkforcePageContent() {
       setPositionHistory(history || []);
       setModalType('position-history');
     } catch (err: any) {
-      alert(err.message || 'Failed to load position history');
+      setActionFeedback({ type: 'error', message: err.message || 'Failed to load position history' });
     }
   };
 
@@ -484,7 +480,7 @@ function WorkforcePageContent() {
       setGrpCode('');
       setGrpName('');
       setGrpDesc('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to create worker group');
     } finally {
@@ -505,7 +501,7 @@ function WorkforcePageContent() {
       });
       setModalType(null);
       setEditingGroup(null);
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to update worker group');
     } finally {
@@ -521,7 +517,7 @@ function WorkforcePageContent() {
       setGroupMembers(members || []);
       setModalType('group-members');
     } catch (err: any) {
-      alert(err.message || 'Failed to load group members');
+      setActionFeedback({ type: 'error', message: err.message || 'Failed to load group members' });
     }
   };
 
@@ -535,7 +531,7 @@ function WorkforcePageContent() {
       const members = await adminApi.getWorkerGroupMembers(selectedGroup.id, true);
       setGroupMembers(members || []);
       setGrpAddEmpId('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to add worker to group');
     } finally {
@@ -544,15 +540,12 @@ function WorkforcePageContent() {
   };
 
   const handleRemoveGroupMember = async (employeeId: string) => {
-    if (!selectedGroup || !confirm('Remove worker from this active group?')) return;
-    try {
+    if (!selectedGroup) return;
+    setPendingRemoval({ run: async () => {
       await adminApi.removeWorkerGroupMembers(selectedGroup.id, [employeeId]);
       const members = await adminApi.getWorkerGroupMembers(selectedGroup.id, true);
       setGroupMembers(members || []);
-      loadAllData();
-    } catch (err: any) {
-      alert(err.message || 'Failed to remove member');
-    }
+    } });
   };
 
   const handleResolvePositionRequest = async (approved: boolean) => {
@@ -567,7 +560,7 @@ function WorkforcePageContent() {
       setModalType(null);
       setSelectedRequest(null);
       setReviewNote('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to resolve request');
     } finally {
@@ -612,11 +605,12 @@ function WorkforcePageContent() {
       await adminApi.createProject({
         code: prjCode.trim().toUpperCase(),
         name: prjName.trim(),
+        workMode: 'SITE',
       });
       setModalType(null);
       setPrjCode('');
       setPrjName('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to create project');
     } finally {
@@ -636,7 +630,7 @@ function WorkforcePageContent() {
       });
       setModalType(null);
       setEditingProject(null);
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to update project');
     } finally {
@@ -645,13 +639,7 @@ function WorkforcePageContent() {
   };
 
   const handleDeleteProject = async (projectId: string) => {
-    if (!confirm('Are you sure you want to delete this project?')) return;
-    try {
-      await adminApi.deleteProject(projectId);
-      loadAllData();
-    } catch (err: any) {
-      alert(err.message || 'Failed to delete project');
-    }
+    setPendingRemoval({ run: () => adminApi.deleteProject(projectId).then(() => undefined) });
   };
 
   const handleCreateSite = async (e: React.FormEvent) => {
@@ -671,7 +659,7 @@ function WorkforcePageContent() {
       });
       setModalType(null);
       setSiteName('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to create site');
     } finally {
@@ -696,7 +684,7 @@ function WorkforcePageContent() {
       });
       setModalType(null);
       setEditingSite(null);
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to update site');
     } finally {
@@ -705,13 +693,7 @@ function WorkforcePageContent() {
   };
 
   const handleDeleteSite = async (siteId: string) => {
-    if (!confirm('Are you sure you want to delete this physical site?')) return;
-    try {
-      await adminApi.deleteSite(siteId);
-      loadAllData();
-    } catch (err: any) {
-      alert(err.message || 'Failed to delete site');
-    }
+    setPendingRemoval({ run: () => adminApi.deleteSite(siteId).then(() => undefined) });
   };
 
   const handleCreateSchedule = async (e: React.FormEvent) => {
@@ -728,7 +710,7 @@ function WorkforcePageContent() {
       });
       setModalType(null);
       setSchName('');
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to create schedule');
     } finally {
@@ -751,7 +733,7 @@ function WorkforcePageContent() {
       });
       setModalType(null);
       setEditingSchedule(null);
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to update schedule');
     } finally {
@@ -760,12 +742,22 @@ function WorkforcePageContent() {
   };
 
   const handleDeleteSchedule = async (scheduleId: string) => {
-    if (!confirm('Are you sure you want to delete this work schedule?')) return;
+    setPendingRemoval({ run: () => adminApi.deleteSchedule(scheduleId).then(() => undefined) });
+  };
+
+  const confirmRemoval = async () => {
+    if (!pendingRemoval || isSubmitting) return;
+    setIsSubmitting(true);
+    setActionFeedback({ type: 'info', message: km.actions.processing });
     try {
-      await adminApi.deleteSchedule(scheduleId);
-      loadAllData();
+      await pendingRemoval.run();
+      await loadAllData();
+      setPendingRemoval(null);
+      setActionFeedback({ type: 'success', message: km.actions.removed });
     } catch (err: any) {
-      alert(err.message || 'Failed to delete schedule');
+      setActionFeedback({ type: 'error', message: err.message || km.actions.saveFailed });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -782,7 +774,7 @@ function WorkforcePageContent() {
         endsOn: assignEndsOn || undefined,
       });
       setModalType(null);
-      loadAllData();
+      await loadAllData(false, km.actions.saved);
     } catch (err: any) {
       setFormError(err.message || 'Failed to create assignment');
     } finally {
@@ -790,274 +782,374 @@ function WorkforcePageContent() {
     }
   };
 
+  const handleDeleteAssignment = async (assignmentId: string) => {
+    setPendingRemoval({ run: () => adminApi.deleteAssignment(assignmentId).then(() => undefined) });
+  };
+
+  const openEditSite = (site: SiteListItem) => {
+    setEditingSite(site);
+    setSiteName(site.name);
+    setSiteProjectId(site.projectId);
+    setSiteLat(String(site.latitude));
+    setSiteLng(String(site.longitude));
+    setSiteRadius(String(site.allowedRadiusMeters));
+    setSiteTimezone(site.timezone || 'Asia/Phnom_Penh');
+    setPastedMapUrl(`https://maps.google.com/?q=${site.latitude},${site.longitude}`);
+    setParseSuccessMsg(null);
+    setMapResolveError(null);
+    setFormError(null);
+    setModalType('edit-site');
+  };
+
+  const openAddSite = (defaultProjectId?: string) => {
+    setEditingSite(null);
+    setSiteName('');
+    setSiteProjectId(defaultProjectId || selectedProjectId || projects[0]?.id || '');
+    setSiteLat('11.5564');
+    setSiteLng('104.9282');
+    setSiteRadius('500');
+    setSiteTimezone('Asia/Phnom_Penh');
+    setPastedMapUrl('');
+    setParseSuccessMsg(null);
+    setMapResolveError(null);
+    setFormError(null);
+    setModalType('site');
+  };
+
+  const openEditSchedule = (sch: WorkScheduleListItem) => {
+    setEditingSchedule(sch);
+    setSchName(sch.name);
+    setSchStart(sch.startTime);
+    setSchEnd(sch.endTime);
+    setSchGrace(String(sch.graceMinutes ?? 0));
+    setSchTimezone(sch.timezone || 'Asia/Phnom_Penh');
+    setFormError(null);
+    setModalType('edit-schedule');
+  };
+
+  const openAddSchedule = () => {
+    setEditingSchedule(null);
+    setSchName('');
+    setSchStart('08:00');
+    setSchEnd('17:00');
+    setSchGrace('15');
+    setSchTimezone('Asia/Phnom_Penh');
+    setFormError(null);
+    setModalType('schedule');
+  };
+
+  const openAddProject = () => {
+    setEditingProject(null);
+    setPrjCode(`PRJ-${Date.now().toString().slice(-4)}`);
+    setPrjName('');
+    setFormError(null);
+    setModalType('project');
+  };
+
+  const openAddAssignment = () => {
+    setAssignEmpId(employees[0]?.id || '');
+    setAssignSiteId(sites[0]?.id || '');
+    setAssignSchId(schedules[0]?.id || '');
+    setAssignStartsOn(new Date().toISOString().slice(0, 10));
+    setAssignEndsOn(new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10));
+    setFormError(null);
+    setModalType('assignment');
+  };
+
   const activeFeatureTitle =
     activeTab === 'employees'
-      ? 'Employee Directory'
-      : activeTab === 'positions'
-      ? 'Positions Governance'
-      : activeTab === 'worker-groups'
-      ? 'Worker Groups'
-      : activeTab === 'position-requests'
-      ? 'Worker Requests & Registration'
+      ? t.workforce.titleEmployees
       : activeTab === 'projects-sites'
-      ? 'Projects, Sites & Schedules'
-      : 'Shift Assignments';
+      ? t.workforce.titleProjectsSites
+      : t.workforce.titleAssignments;
+
+  const activeFeatureSubtitle =
+    activeTab === 'employees'
+      ? t.workforce.subtitleEmployees
+      : activeTab === 'projects-sites'
+      ? t.workforce.subtitleProjectsSites
+      : t.workforce.subtitleAssignments;
 
   return (
     <div className="space-y-6">
-      {/* Page Header (No duplicate tabs - feature selected via sidebar) */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-200">
-        <div>
-          <h1 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center space-x-2">
-            <Users className="w-5 h-5 text-[#023F26]" />
-            <span>{activeFeatureTitle}</span>
-          </h1>
-          <p className="text-xs font-medium text-slate-500 mt-0.5">
-            Manage workers, work sites, schedules, and their current assignments.
-          </p>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={() => loadAllData(true)}
-            disabled={isLoading}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl border-2 border-white bg-[#023F26] text-white text-xs font-bold shadow-xs hover:bg-[#012919] transition-all cursor-pointer"
-          >
-            <Clock className={`w-3.5 h-3.5 text-[#c4d701] ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Refresh View</span>
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-3 text-rose-700 text-xs flex items-center space-x-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
+      <WorkforcePageHeader
+        title={activeFeatureTitle}
+        subtitle={activeFeatureSubtitle}
+        refreshLabel={t.workforce.refreshView}
+        isLoading={isLoading}
+        onRefresh={() => loadAllData(true)}
+        error={error}
+      />
+      <ActionStatus feedback={actionFeedback} />
 
       {/* 1. EMPLOYEES DIRECTORY TAB */}
       {activeTab === 'employees' && (
         <div className="space-y-4">
-          {/* Controls & Filter Bar */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
-            <div className="flex flex-wrap items-center gap-2 flex-1">
-              <input
-                type="text"
-                placeholder="Search workers by name, code, title..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="px-3 py-1.5 text-xs border border-slate-300 rounded-md focus:ring-1 focus:ring-sky-500 w-full sm:w-64"
-              />
+          <EmployeeDirectoryControls
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            positionFilter={positionFilter}
+            onPositionChange={setPositionFilter}
+            positions={positions}
+            searchLabel={t.workforce.searchEmployees}
+            addLabel={t.workforce.addEmployee}
+            onAdd={() => { setFormError(null); setModalType('employee'); }}
+          />
 
-              <div className="flex items-center space-x-1.5 text-xs text-slate-600">
-                <Filter className="w-3.5 h-3.5 text-slate-400" />
-                <span>Position:</span>
-                <select
-                  value={positionFilter}
-                  onChange={(e) => setPositionFilter(e.target.value)}
-                  className="px-2 py-1 text-xs border border-slate-300 rounded-md bg-white"
-                >
-                  <option value="ALL">All Positions</option>
-                  <option value="UNASSIGNED">Unassigned Only</option>
-                  {positions.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2 shrink-0">
-              <button
-                onClick={() => {
-                  setFormError(null);
-                  setModalType('employee');
-                }}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#023F26] hover:bg-[#012919] text-white text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5 text-[#c4d701]" />
-                <span>Add Employee</span>
-              </button>
-            </div>
-          </div>
-
-          {/* One worker card, with assignment details revealed on demand. */}
-          {Object.keys(assignmentGroups).length === 0 ? (
-            <div className="p-8 text-center bg-white rounded-2xl border border-slate-200/80 text-slate-400 text-xs">
-              No shift assignments found.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {Object.entries(assignmentGroups).map(([employeeId, workerAssignments]) => {
-                const worker = workerAssignments[0];
-                const employee = employees.find((item) => item.id === employeeId);
-                const isExpanded = expandedAssignmentEmployeeId === employeeId;
-                const activeCount = workerAssignments.filter((item) => item.status === 'ACTIVE').length;
-
-                return (
-                  <article
-                    key={employeeId}
-                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setExpandedAssignmentEmployeeId(isExpanded ? null : employeeId)}
-                      aria-expanded={isExpanded}
-                      className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-slate-50 sm:gap-4 sm:p-5"
-                    >
-                      <div className="size-12 shrink-0 overflow-hidden rounded-full border-2 border-white bg-amber-300 shadow-sm sm:size-14">
-                        {employee?.avatarUrl ? (
-                          <img src={employee.avatarUrl} alt="" className="size-full object-cover" />
-                        ) : (
-                          <span className="flex size-full items-center justify-center text-lg font-extrabold text-white">
-                            {worker.employeeName.slice(0, 2).toUpperCase()}
-                          </span>
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <h3 className="text-base font-extrabold text-slate-900">{worker.employeeName}</h3>
-                          <span className="font-mono text-xs font-bold text-slate-400">{worker.employeeCode}</span>
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {workerAssignments.length} project{workerAssignments.length === 1 ? '' : 's'} assigned
-                          {activeCount > 0 ? ' · ' + activeCount + ' active' : ''}
-                        </p>
-                      </div>
-                      <span className="hidden rounded-full bg-[#023F26]/10 px-2.5 py-1 text-[10px] font-bold text-[#023F26] sm:inline">
-                        View details
-                      </span>
-                      <ChevronDown
-                        className={[
-                          'size-5 shrink-0 text-slate-400 transition-transform',
-                          isExpanded ? 'rotate-180' : '',
-                        ].join(' ')}
-                      />
-                    </button>
-
-                    {isExpanded && (
-                      <div className="border-t border-slate-100 bg-slate-50/70 p-3 sm:p-4">
-                        <p className="mb-2 px-1 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                          Project assignments
-                        </p>
-                        <div className="space-y-2">
-                          {workerAssignments.map((assignment) => (
-                            <div
-                              key={assignment.id}
-                              className="grid gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-4"
-                            >
-                              <div className="min-w-0">
-                                <p className="font-bold text-slate-900">{assignment.projectName}</p>
-                                <p className="mt-0.5 truncate text-slate-500">{assignment.siteName} · {assignment.scheduleName}</p>
-                              </div>
-                              <span className="font-mono text-[11px] text-slate-500">
-                                {assignment.startsOn.slice(0, 10)} — {assignment.endsOn ? assignment.endsOn.slice(0, 10) : 'Ongoing'}
-                              </span>
-                              <span
-                                className={
-                                  assignment.status === 'ACTIVE'
-                                    ? 'w-fit rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200'
-                                    : 'w-fit rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600'
-                                }
-                              >
-                                {assignment.status}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          )}
+          <AssignmentWorkerList assignmentGroups={assignmentGroups} employees={employees} expandedEmployeeId={expandedAssignmentEmployeeId} onToggle={(employeeId) => setExpandedAssignmentEmployeeId((current) => current === employeeId ? null : employeeId)} detailsLabel={km.admin.details} />
         </div>
       )}
 
-      {/* MODALS - All rendered via document.body portal */}
-      {/* 1. Add Employee Modal */}
-      <Modal
-        isOpen={modalType === 'employee'}
-        onClose={() => setModalType(null)}
-        title="Add New Worker"
-        subtitle="Register an employee record in the organization directory."
-        maxWidth="md"
-      >
-        {formError && (
-          <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs mb-3 flex items-center space-x-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{formError}</span>
-          </div>
-        )}
+      {/* 2. PROJECTS, SITES & SCHEDULES TAB */}
+      {activeTab === 'projects-sites' && (
+        <div className="space-y-6">
+          <ProjectSiteControls
+            projects={projects}
+            selectedProjectId={selectedProjectId}
+            onSelectProject={setSelectedProjectId}
+            allProjectsLabel={t.workforce.allProjects}
+            projectsLabel={t.workforce.projectsLabel}
+            addSiteLabel={t.workforce.addSite}
+            addScheduleLabel={t.workforce.addSchedule}
+            createProjectLabel={t.workforce.createProject}
+            onAddSite={openAddSite}
+            onAddSchedule={openAddSchedule}
+            onAddProject={openAddProject}
+          />
 
-        <form onSubmit={handleCreateEmployee} className="space-y-3.5 text-xs">
-          <div>
-            <label className="block font-medium text-slate-700 mb-1">Employee Code *</label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. EMP-101"
-              value={empCode}
-              onChange={(e) => setEmpCode(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl font-mono"
-            />
+          {/* Section A: Physical Sites & GPS Geofence Boundaries */}
+          <div className="space-y-3">
+            <WorkforceSectionHeading icon={<MapPin className="size-4 text-emerald-600" />} title={t.workforce.sitesSectionTitle} subtitle={t.workforce.sitesSectionSubtitle} count={`${sites.filter((s) => !selectedProjectId || s.projectId === selectedProjectId).length} Sites`} />
+
+            {sites.filter((s) => !selectedProjectId || s.projectId === selectedProjectId).length === 0 ? (
+              <div className="py-10 text-center bg-white rounded-2xl border border-slate-200 text-xs text-slate-500">
+                <MapPin className="size-8 text-slate-300 mx-auto mb-2" />
+                {t.workforce.noSites}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {sites
+                  .filter((s) => !selectedProjectId || s.projectId === selectedProjectId)
+                  .map((site) => {
+                    const prj = projects.find((p) => p.id === site.projectId);
+                    return (
+                      <div
+                        key={site.id}
+                        className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3 flex flex-col justify-between hover:border-emerald-300 transition-colors"
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h3 className="text-sm font-extrabold text-slate-900 leading-snug">
+                                {site.name}
+                              </h3>
+                              <span className="inline-block mt-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                                {prj?.name || 'Project'}
+                              </span>
+                            </div>
+                            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-black text-emerald-800 shrink-0">
+                              {isKm ? `ទីតាំងកំណត់ ${site.allowedRadiusMeters} ម៉ែត្រ` : `${site.allowedRadiusMeters}m Perimeter`}
+                            </span>
+                          </div>
+
+                          {/* Coordinates & Map Link */}
+                          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/70 space-y-1.5 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-slate-500 font-mono">
+                                📍 {Number(site.latitude).toFixed(4)}, {Number(site.longitude).toFixed(4)}
+                              </span>
+                              <a
+                                href={`https://www.google.com/maps?q=${site.latitude},${site.longitude}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-600 hover:text-sky-700 hover:underline"
+                              >
+                                <span>{isKm ? 'ផែនទី' : 'Map'}</span>
+                                <ExternalLink size={10} />
+                              </a>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-200/50">
+                              <span>{isKm ? 'ទីតាំងកំណត់:' : 'Allowed Radius:'}</span>
+                              <span className="font-bold text-emerald-700">{site.allowedRadiusMeters} ម៉ែត្រ</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEditSite(site)}
+                            className="flex-1 py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            <Pencil size={12} />
+                            <span>{t.workforce.editLocation}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSite(site.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                            title="លុបការដ្ឋាន"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
           </div>
 
-          <div>
-            <label className="block font-medium text-slate-700 mb-1">Full Name *</label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. John Doe"
-              value={empName}
-              onChange={(e) => setEmpName(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl"
-            />
+          {/* Section B: Work Schedules & Flexible Grace Period */}
+          <div className="space-y-3 pt-4 border-t border-slate-200">
+            <WorkforceSectionHeading icon={<Clock className="size-4 text-amber-600" />} title={t.workforce.schedulesSectionTitle} subtitle={t.workforce.schedulesSectionSubtitle} count={`${schedules.length} Schedules`} />
+
+            {schedules.length === 0 ? (
+              <div className="py-10 text-center bg-white rounded-2xl border border-slate-200 text-xs text-slate-500">
+                <Clock className="size-8 text-slate-300 mx-auto mb-2" />
+                {t.workforce.noSchedules}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {schedules.map((sch) => (
+                  <div
+                    key={sch.id}
+                    className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3 flex flex-col justify-between hover:border-amber-300 transition-colors"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className="text-sm font-extrabold text-slate-900">{sch.name}</h3>
+                          <span className="text-[10px] text-slate-400 font-mono">{sch.timezone}</span>
+                        </div>
+                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-black text-amber-900 shrink-0">
+                          +{sch.graceMinutes ?? 0}mn Grace
+                        </span>
+                      </div>
+
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/70 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-500 font-medium">ម៉ោងធ្វើការ:</span>
+                          <span className="font-mono font-extrabold text-slate-800">
+                            {sch.startTime} → {sch.endTime}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-200/50">
+                          <span className="text-slate-500 font-medium">អនុគ្រោះយឺត:</span>
+                          <span className="font-bold text-amber-700">
+                            {sch.graceMinutes ? `${sch.graceMinutes} នាទី` : '0 នាទី (គ្មាន)'}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">
+                          ចូលយឺតមិនលើសពី {sch.graceMinutes ?? 0} នាទី នឹងនៅតែចាត់ទុកជា ON_TIME (ទាន់ពេល)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openEditSchedule(sch)}
+                        className="flex-1 py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <Pencil size={12} />
+                        <span>{t.workforce.editSchedule}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSchedule(sch.id)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                        title="លុបវេនការ"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div>
-            <label className="block font-medium text-slate-700 mb-1">Phone Number (Optional)</label>
-            <input
-              type="text"
-              placeholder="e.g. +855977429389"
-              value={empPhone}
-              onChange={(e) => setEmpPhone(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl font-mono"
-            />
-          </div>
+          {/* Section C: Projects Overview */}
+          <div className="space-y-3 pt-4 border-t border-slate-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                  <Building className="size-4 text-slate-700" />
+                  <span>បញ្ជីគម្រោងទាំងអស់ (Projects Directory)</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  គម្រោងដែលបានភ្ជាប់ជាមួយ Telegram Group និងការគ្រប់គ្រងទីតាំងការងារ។
+                </p>
+              </div>
+              <span className="text-xs font-bold text-slate-400">{projects.length} Projects</span>
+            </div>
 
-          <div>
-            <label className="block font-medium text-slate-700 mb-1">Job Title (Optional)</label>
-            <input
-              type="text"
-              placeholder="e.g. Senior Electrician"
-              value={empTitle}
-              onChange={(e) => setEmpTitle(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl"
-            />
-          </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {projects.map((p) => {
+                const projectSites = sites.filter((s) => s.projectId === p.id);
+                return (
+                  <div
+                    key={p.id}
+                    className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs space-y-3 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className="text-sm font-extrabold text-slate-900">{p.name}</h3>
+                          <span className="text-[10px] text-slate-400 font-mono">{p.code}</span>
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-black ${
+                            p.telegramConnectionStatus === 'CONNECTED'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {p.telegramConnectionStatus === 'CONNECTED' ? 'Telegram Linked' : 'Unlinked'}
+                        </span>
+                      </div>
 
-          <div className="pt-2 flex justify-end space-x-2">
-            <button
-              type="button"
-              onClick={() => setModalType(null)}
-              className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
-            >
-              {isSubmitting ? 'Saving...' : 'Save Employee'}
-            </button>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-slate-50 p-2 rounded-xl">
+                          <p className="text-[10px] text-slate-400 uppercase font-semibold">Mode</p>
+                          <p className="font-bold text-slate-800 mt-0.5">{p.workMode}</p>
+                        </div>
+                        <div className="bg-slate-50 p-2 rounded-xl">
+                          <p className="text-[10px] text-slate-400 uppercase font-semibold">Sites</p>
+                          <p className="font-bold text-slate-800 mt-0.5">{projectSites.length} ការដ្ឋាន</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => openAddSite(p.id)}
+                        className="text-xs font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus size={12} />
+                        <span>បន្ថែមការដ្ឋានថ្មី</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteProject(p.id)}
+                        className="text-slate-400 hover:text-rose-600 cursor-pointer p-1"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </form>
-      </Modal>
+        </div>
+      )}
+
+      {/* 3. ASSIGNMENTS TAB */}
+      {activeTab === 'assignments' && <AssignmentTable assignments={assignments} employees={employees} sites={sites} schedules={schedules} projects={projects} title={t.workforce.assignmentsSectionTitle} subtitle={t.workforce.assignmentsSectionSubtitle} addLabel={t.workforce.assignWorker} onAdd={openAddAssignment} onDelete={handleDeleteAssignment} />}
+      <CreateEmployeeModal isOpen={modalType === 'employee'} formError={formError} isSubmitting={isSubmitting} empCode={empCode} empName={empName} empPhone={empPhone} empTitle={empTitle} onClose={() => setModalType(null)} onSubmit={handleCreateEmployee} onEmpCode={setEmpCode} onEmpName={setEmpName} onEmpPhone={setEmpPhone} onEmpTitle={setEmpTitle} />
 
       {/* 2. Create Project Modal */}
       <Modal
@@ -1110,7 +1202,7 @@ function WorkforcePageContent() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
             >
               {isSubmitting ? 'Creating...' : 'Create Project'}
             </button>
@@ -1122,8 +1214,8 @@ function WorkforcePageContent() {
       <Modal
         isOpen={modalType === 'site'}
         onClose={() => setModalType(null)}
-        title="Add Physical Geofenced Site"
-        subtitle="Establish official GPS geofence radius and site timezone."
+        title={isKm ? 'បន្ថែមការដ្ឋានថ្មី' : 'Add Physical Site'}
+        subtitle={isKm ? 'កំណត់កូអរដោនេលើផែនទី និងទីតាំងកំណត់សម្រាប់ការ Check-in' : 'Establish official GPS coordinates and allowed site radius.'}
         maxWidth="2xl"
       >
         {formError && (
@@ -1136,13 +1228,13 @@ function WorkforcePageContent() {
         <form onSubmit={handleCreateSite} className="space-y-3.5 text-xs">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Target Project *</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'ជ្រើសរើសគម្រោង *' : 'Target Project *'}</label>
               <select
                 value={siteProjectId}
                 onChange={(e) => setSiteProjectId(e.target.value)}
                 className="w-full px-3 py-2 border rounded-xl bg-white font-semibold"
               >
-                {projects.map((p) => (
+                {projects.filter((p) => p.status === 'ACTIVE').map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name} ({p.code})
                   </option>
@@ -1151,11 +1243,11 @@ function WorkforcePageContent() {
             </div>
 
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Site Name *</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'ឈ្មោះការដ្ឋាន *' : 'Site Name *'}</label>
               <input
                 type="text"
                 required
-                placeholder="e.g. Main Gate Entrance - Tower A"
+                placeholder={isKm ? 'ឧ. ច្រកចូលធំ ឬ អាគារ A' : 'e.g. Main Gate Entrance - Tower A'}
                 value={siteName}
                 onChange={(e) => setSiteName(e.target.value)}
                 className="w-full px-3 py-2 border rounded-xl"
@@ -1163,21 +1255,21 @@ function WorkforcePageContent() {
             </div>
           </div>
 
-          {/* Paste Google Maps Link Resolver */}
+          {/* Paste Map Link Resolver */}
           <div>
             <label className="block font-medium text-slate-700 mb-1">
-              Paste Google Maps Link / Share URL (Optional)
+              {isKm ? 'បិទភ្ជាប់តំណភ្ជាប់ផែនទី (ស្រេចចិត្ត)' : 'Paste Map Link / Share URL (Optional)'}
             </label>
             <input
               type="text"
-              placeholder="https://maps.google.com/?q=11.5564,104.9282"
+              placeholder={isKm ? 'ឧ. https://maps.app.goo.gl/... ឬ https://maps.google.com/?q=11.5564,104.9282' : 'https://maps.google.com/?q=11.5564,104.9282 or https://maps.app.goo.gl/...'}
               value={pastedMapUrl}
               onChange={(e) => handleMapUrlChange(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl font-mono text-[11px]"
+              className="w-full px-3 py-2 border rounded-xl font-mono text-[11px] bg-white focus:ring-2 focus:ring-[var(--portal-primary)] focus:outline-hidden"
             />
             {mapResolving && (
-              <p className="text-[10px] text-[#023F26] mt-1 font-medium animate-pulse">
-                Resolving Google Maps coordinates...
+              <p className="text-[10px] text-[var(--portal-primary)] mt-1 font-medium animate-pulse">
+                {isKm ? 'កំពុងទាញយកទីតាំងពីផែនទី...' : 'Resolving map coordinates...'}
               </p>
             )}
             {parseSuccessMsg && (
@@ -1195,13 +1287,13 @@ function WorkforcePageContent() {
             disabled={geoLoading}
             className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl border border-slate-300 text-xs flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
           >
-            <MapPin className="w-3.5 h-3.5 text-[#023F26]" />
-            <span>{geoLoading ? 'Detecting device location...' : 'Use Current Device GPS Location'}</span>
+            <MapPin className="w-3.5 h-3.5 text-[var(--portal-primary)]" />
+            <span>{geoLoading ? (isKm ? 'កំពុងស្វែងរកទីតាំង GPS...' : 'Detecting device location...') : (isKm ? 'ប្រើទីតាំង GPS ឧបករណ៍បច្ចុប្បន្ន' : 'Use Current Device GPS Location')}</span>
           </button>
 
           {/* Real-time Leaflet Map Component */}
           <div>
-            <label className="block font-medium text-slate-700 mb-1">Real-Time Interactive Geofence Map Pin</label>
+            <label className="block font-medium text-slate-700 mb-1">{isKm ? 'ម្ជុលទីតាំងកំណត់លើផែនទីជាក់ស្តែង' : 'Real-Time Interactive Map Pin'}</label>
             <SiteLocationPicker
               latitude={parseFloat(siteLat) || 11.5564}
               longitude={parseFloat(siteLng) || 104.9282}
@@ -1212,7 +1304,7 @@ function WorkforcePageContent() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Latitude</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'រយៈទទឹង (Latitude) *' : 'Latitude *'}</label>
               <input
                 type="text"
                 required
@@ -1222,7 +1314,7 @@ function WorkforcePageContent() {
               />
             </div>
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Longitude</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'រយៈបណ្តោយ (Longitude) *' : 'Longitude *'}</label>
               <input
                 type="text"
                 required
@@ -1235,7 +1327,7 @@ function WorkforcePageContent() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Geofence Radius (Meters) *</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'ទីតាំងកំណត់ (គិតជាម៉ែត្រ) *' : 'Allowed Location Radius (Meters) *'}</label>
               <input
                 type="number"
                 required
@@ -1245,10 +1337,13 @@ function WorkforcePageContent() {
                 onChange={(e) => setSiteRadius(e.target.value)}
                 className="w-full px-3 py-2 border rounded-xl font-mono"
               />
+              <p className="text-[10px] text-slate-500 mt-1">
+                {isKm ? 'ចម្ងាយជុំវិញការដ្ឋានដែលអនុញ្ញាតឱ្យបុគ្គលិកអាច Check In បាន (ឧ. ១០០ ទៅ ៥០០ ម៉ែត្រ)' : 'Distance perimeter around the site where employees are allowed to check in.'}
+              </p>
             </div>
 
             <div>
-              <label className="block font-medium text-slate-700 mb-1">IANA Timezone *</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'តំបន់ម៉ោងផ្លូវការ *' : 'IANA Timezone *'}</label>
               <select
                 value={siteTimezone}
                 onChange={(e) => setSiteTimezone(e.target.value)}
@@ -1268,14 +1363,14 @@ function WorkforcePageContent() {
               onClick={() => setModalType(null)}
               className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 text-xs font-semibold transition-colors cursor-pointer"
             >
-              Cancel
+              {isKm ? 'បោះបង់' : 'Cancel'}
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
             >
-              {isSubmitting ? 'Saving...' : 'Save Physical Site'}
+              {isSubmitting ? (isKm ? 'កំពុងរក្សាទុក...' : 'Saving...') : (isKm ? 'រក្សាទុកការដ្ឋាន' : 'Save Physical Site')}
             </button>
           </div>
         </form>
@@ -1285,8 +1380,8 @@ function WorkforcePageContent() {
       <Modal
         isOpen={modalType === 'edit-site' && !!editingSite}
         onClose={() => setModalType(null)}
-        title={`Edit Site: ${editingSite?.name || ''}`}
-        subtitle="Update site coordinates, geofence radius, or official timezone."
+        title={isKm ? `កែសម្រួលការដ្ឋាន៖ ${editingSite?.name || ''}` : `Edit Site: ${editingSite?.name || ''}`}
+        subtitle={isKm ? 'កែប្រែកូអរដោនេលើផែនទី ទីតាំងកំណត់ ឬតំបន់ម៉ោងផ្លូវការ' : 'Update site coordinates, location radius, or official timezone.'}
         maxWidth="2xl"
       >
         {formError && (
@@ -1298,7 +1393,7 @@ function WorkforcePageContent() {
 
         <form onSubmit={handleUpdateSite} className="space-y-3.5 text-xs">
           <div>
-            <label className="block font-medium text-slate-700 mb-1">Site Name *</label>
+            <label className="block font-medium text-slate-700 mb-1">{isKm ? 'ឈ្មោះការដ្ឋាន *' : 'Site Name *'}</label>
             <input
               type="text"
               required
@@ -1308,8 +1403,44 @@ function WorkforcePageContent() {
             />
           </div>
 
+          {/* Paste Map Link Resolver */}
           <div>
-            <label className="block font-medium text-slate-700 mb-1">Interactive Geofence Map Pin</label>
+            <label className="block font-medium text-slate-700 mb-1">
+              {isKm ? 'បិទភ្ជាប់តំណភ្ជាប់ផែនទី (ស្រេចចិត្ត)' : 'Paste Map Link / Share URL (Optional)'}
+            </label>
+            <input
+              type="text"
+              placeholder={isKm ? 'ឧ. https://maps.app.goo.gl/... ឬ https://maps.google.com/?q=11.5564,104.9282' : 'https://maps.google.com/?q=11.5564,104.9282 or https://maps.app.goo.gl/...'}
+              value={pastedMapUrl}
+              onChange={(e) => handleMapUrlChange(e.target.value)}
+              className="w-full px-3 py-2 border rounded-xl font-mono text-[11px] bg-white focus:ring-2 focus:ring-[var(--portal-primary)] focus:outline-hidden"
+            />
+            {mapResolving && (
+              <p className="text-[10px] text-[var(--portal-primary)] mt-1 font-medium animate-pulse">
+                {isKm ? 'កំពុងទាញយកទីតាំងពីផែនទី...' : 'Resolving map coordinates...'}
+              </p>
+            )}
+            {parseSuccessMsg && (
+              <p className="text-[10px] text-emerald-600 mt-1 font-semibold">{parseSuccessMsg}</p>
+            )}
+            {mapResolveError && (
+              <p className="text-[10px] text-rose-600 mt-1 font-semibold">{mapResolveError}</p>
+            )}
+          </div>
+
+          {/* Device GPS Button */}
+          <button
+            type="button"
+            onClick={handleUseCurrentLocation}
+            disabled={geoLoading}
+            className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl border border-slate-300 text-xs flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+          >
+            <MapPin className="w-3.5 h-3.5 text-[var(--portal-primary)]" />
+            <span>{geoLoading ? (isKm ? 'កំពុងស្វែងរកទីតាំង GPS...' : 'Detecting device location...') : (isKm ? 'ប្រើទីតាំង GPS ឧបករណ៍បច្ចុប្បន្ន' : 'Use Current Device GPS Location')}</span>
+          </button>
+
+          <div>
+            <label className="block font-medium text-slate-700 mb-1">{isKm ? 'ម្ជុលទីតាំងកំណត់លើផែនទីជាក់ស្តែង' : 'Real-Time Interactive Map Pin'}</label>
             <SiteLocationPicker
               latitude={parseFloat(siteLat) || 11.5564}
               longitude={parseFloat(siteLng) || 104.9282}
@@ -1320,7 +1451,7 @@ function WorkforcePageContent() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Latitude</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'រយៈទទឹង (Latitude) *' : 'Latitude *'}</label>
               <input
                 type="text"
                 required
@@ -1330,7 +1461,7 @@ function WorkforcePageContent() {
               />
             </div>
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Longitude</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'រយៈបណ្តោយ (Longitude) *' : 'Longitude *'}</label>
               <input
                 type="text"
                 required
@@ -1343,7 +1474,7 @@ function WorkforcePageContent() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
             <div>
-              <label className="block font-medium text-slate-700 mb-1">Geofence Radius (Meters)</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'ទីតាំងកំណត់ (គិតជាម៉ែត្រ) *' : 'Allowed Location Radius (Meters) *'}</label>
               <input
                 type="number"
                 required
@@ -1353,10 +1484,13 @@ function WorkforcePageContent() {
                 onChange={(e) => setSiteRadius(e.target.value)}
                 className="w-full px-3 py-2 border rounded-xl font-mono"
               />
+              <p className="text-[10px] text-slate-500 mt-1">
+                {isKm ? 'ចម្ងាយជុំវិញការដ្ឋានដែលអនុញ្ញាតឱ្យបុគ្គលិកអាច Check In បាន (ឧ. ១០០ ទៅ ៥០០ ម៉ែត្រ)' : 'Distance perimeter around the site where employees are allowed to check in.'}
+              </p>
             </div>
 
             <div>
-              <label className="block font-medium text-slate-700 mb-1">IANA Timezone</label>
+              <label className="block font-medium text-slate-700 mb-1">{isKm ? 'តំបន់ម៉ោងផ្លូវការ' : 'IANA Timezone'}</label>
               <select
                 value={siteTimezone}
                 onChange={(e) => setSiteTimezone(e.target.value)}
@@ -1376,14 +1510,14 @@ function WorkforcePageContent() {
               onClick={() => setModalType(null)}
               className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 text-xs font-semibold transition-colors cursor-pointer"
             >
-              Cancel
+              {isKm ? 'បោះបង់' : 'Cancel'}
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
             >
-              {isSubmitting ? 'Updating...' : 'Update Site'}
+              {isSubmitting ? (isKm ? 'កំពុងកែប្រែ...' : 'Updating...') : (isKm ? 'កែប្រែការដ្ឋាន' : 'Update Site')}
             </button>
           </div>
         </form>
@@ -1480,7 +1614,7 @@ function WorkforcePageContent() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
             >
               {isSubmitting ? 'Creating...' : 'Create Schedule'}
             </button>
@@ -1495,8 +1629,8 @@ function WorkforcePageContent() {
           setModalType(null);
           setEditingSchedule(null);
         }}
-        title={`កែប្រែវេនការ៖ ${editingSchedule?.name || ''}`}
-        subtitle="កែប្រែម៉ោងចូល ម៉ោងចេញ រយៈពេលអនុគ្រោះ និងតំបន់ពេលវេលា។"
+        title={km.schedules.editTitle.replace('{name}', editingSchedule?.name || '')}
+        subtitle={km.schedules.editSubtitle}
         maxWidth="md"
       >
         {formError && (
@@ -1508,7 +1642,7 @@ function WorkforcePageContent() {
 
         <form onSubmit={handleUpdateSchedule} className="space-y-3.5 text-xs">
           <div>
-            <label className="block font-medium text-slate-700 mb-1">ឈ្មោះវេនការ *</label>
+            <label className="block font-medium text-slate-700 mb-1">{km.schedules.name}</label>
             <input
               type="text"
               required
@@ -1520,7 +1654,7 @@ function WorkforcePageContent() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
             <div>
-              <label className="block font-medium text-slate-700 mb-1">ម៉ោងចូល *</label>
+              <label className="block font-medium text-slate-700 mb-1">{km.schedules.startTime}</label>
               <input
                 type="time"
                 required
@@ -1530,7 +1664,7 @@ function WorkforcePageContent() {
               />
             </div>
             <div>
-              <label className="block font-medium text-slate-700 mb-1">ម៉ោងចេញ *</label>
+              <label className="block font-medium text-slate-700 mb-1">{km.schedules.endTime}</label>
               <input
                 type="time"
                 required
@@ -1543,7 +1677,7 @@ function WorkforcePageContent() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5">
             <div>
-              <label className="block font-medium text-slate-700 mb-1">រយៈពេលអនុគ្រោះ (នាទី)</label>
+              <label className="block font-medium text-slate-700 mb-1">{km.schedules.gracePeriod}</label>
               <input
                 type="number"
                 required
@@ -1555,7 +1689,7 @@ function WorkforcePageContent() {
               />
             </div>
             <div>
-              <label className="block font-medium text-slate-700 mb-1">តំបន់ពេលវេលា *</label>
+              <label className="block font-medium text-slate-700 mb-1">{km.schedules.timezone}</label>
               <select
                 value={schTimezone}
                 onChange={(e) => setSchTimezone(e.target.value)}
@@ -1578,14 +1712,14 @@ function WorkforcePageContent() {
               }}
               className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 text-xs font-semibold transition-colors cursor-pointer"
             >
-              បោះបង់
+              {km.schedules.cancel}
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
             >
-              {isSubmitting ? 'កំពុងរក្សាទុក…' : 'រក្សាទុកការកែប្រែ'}
+              {isSubmitting ? km.schedules.saving : km.schedules.saveChanges}
             </button>
           </div>
         </form>
@@ -1653,7 +1787,7 @@ function WorkforcePageContent() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
             >
               {isSubmitting ? 'Creating...' : 'Create Position'}
             </button>
@@ -1717,7 +1851,7 @@ function WorkforcePageContent() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
             >
               {isSubmitting ? 'Assigning...' : 'Confirm Assignment'}
             </button>
@@ -1827,7 +1961,7 @@ function WorkforcePageContent() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer"
             >
               {isSubmitting ? 'Creating...' : 'Create Group'}
             </button>
@@ -1850,7 +1984,7 @@ function WorkforcePageContent() {
             className="flex-1 px-3 py-2 border rounded-xl bg-white"
           >
             <option value="">-- Select Worker to Add --</option>
-            {employees.map((emp) => (
+            {employees.filter((emp) => emp.status === 'ACTIVE').map((emp) => (
               <option key={emp.id} value={emp.id}>
                 {emp.fullName} ({emp.employeeCode})
               </option>
@@ -1859,7 +1993,7 @@ function WorkforcePageContent() {
           <button
             type="submit"
             disabled={!grpAddEmpId || isSubmitting}
-            className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+            className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
           >
             Add Worker
           </button>
@@ -1899,7 +2033,7 @@ function WorkforcePageContent() {
       >
         <div className="text-xs space-y-2 bg-slate-50 p-3.5 rounded-2xl border border-slate-200 mb-3">
           <div><span className="text-slate-500">Worker:</span> <span className="font-semibold">{selectedRequest?.employeeName}</span></div>
-          <div><span className="text-slate-500">Requested Position:</span> <span className="font-bold text-[#023F26]">{selectedRequest?.requestedPositionName}</span></div>
+          <div><span className="text-slate-500">Requested Position:</span> <span className="font-bold text-[var(--portal-primary)]">{selectedRequest?.requestedPositionName}</span></div>
         </div>
 
         <div>
@@ -1926,7 +2060,7 @@ function WorkforcePageContent() {
             type="button"
             onClick={() => handleResolvePositionRequest(true)}
             disabled={isSubmitting}
-            className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl font-bold cursor-pointer"
+            className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl font-bold cursor-pointer"
           >
             Approve & Assign Position
           </button>
@@ -2034,7 +2168,7 @@ function WorkforcePageContent() {
             type="button"
             onClick={() => handleResolveRegistrationRequest(true)}
             disabled={isSubmitting || !regEmpCode || !regFullName}
-            className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl font-bold cursor-pointer disabled:opacity-50"
+            className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl font-bold cursor-pointer disabled:opacity-50"
           >
             Approve & Provision Employee
           </button>
@@ -2066,7 +2200,7 @@ function WorkforcePageContent() {
               className="w-full px-3 py-2 border rounded-xl bg-white font-medium"
             >
               <option value="">Select a worker...</option>
-              {employees.map((emp) => (
+              {employees.filter((emp) => emp.status === 'ACTIVE').map((emp) => (
                 <option key={emp.id} value={emp.id}>
                   {emp.fullName} ({emp.employeeCode})
                 </option>
@@ -2084,7 +2218,7 @@ function WorkforcePageContent() {
                 className="w-full px-3 py-2 border rounded-xl bg-white font-medium"
               >
                 <option value="">Select a site...</option>
-                {sites.map((s) => (
+                {sites.filter((s) => s.status === 'ACTIVE').map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name} ({s.timezone})
                   </option>
@@ -2144,7 +2278,7 @@ function WorkforcePageContent() {
             <button
               type="submit"
               disabled={isSubmitting || !assignEmpId || !assignSiteId || !assignSchId || !assignStartsOn}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
             >
               {isSubmitting ? 'Assigning...' : 'Assign Worker'}
             </button>
@@ -2202,13 +2336,14 @@ function WorkforcePageContent() {
             <button
               type="submit"
               disabled={isSubmitting || !tgUserId}
-              className="px-4 py-2 bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+              className="px-4 py-2 bg-[var(--portal-primary)] hover:brightness-90 text-white rounded-xl text-xs font-bold shadow-2xs transition-all active:scale-95 cursor-pointer disabled:opacity-50"
             >
               {isSubmitting ? 'Linking...' : 'Link Telegram'}
             </button>
           </div>
         </form>
       </Modal>
+      <ConfirmActionDialog open={Boolean(pendingRemoval)} title={km.actions.confirmRemovalTitle} description={km.actions.confirmRemovalDescription} confirmLabel={km.actions.remove} destructive pending={isSubmitting} onCancel={() => setPendingRemoval(null)} onConfirm={() => void confirmRemoval()} />
     </div>
   );
 }

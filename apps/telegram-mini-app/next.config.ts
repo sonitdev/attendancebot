@@ -1,6 +1,10 @@
 import type { NextConfig } from 'next';
 
+const miniAppUrl = process.env.NEXT_PUBLIC_TELEGRAM_MINI_APP_URL || process.env.TELEGRAM_MINI_APP_URL;
+const miniAppHostname = miniAppUrl ? new URL(miniAppUrl).hostname : undefined;
+
 const nextConfig: NextConfig = {
+  ...(miniAppHostname ? { allowedDevOrigins: [miniAppHostname] } : {}),
   images: {
     remotePatterns: [
       {

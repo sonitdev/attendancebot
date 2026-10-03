@@ -1,0 +1,19 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { Download } from 'lucide-react';
+import { km, type EmployeeListItem, type ProjectListItem } from '@workforce/contracts';
+import { adminApi } from '@/lib/api';
+import { ActionStatus, type ActionFeedback } from '@/components/ui/action-state';
+
+export default function ReportsPage() {
+  const [projects, setProjects] = useState<ProjectListItem[]>([]); const [workers, setWorkers] = useState<EmployeeListItem[]>([]);
+  const [filters, setFilters] = useState({ startDate: '', endDate: '', projectId: '', employeeId: '', exceptionsOnly: false });
+  const [error, setError] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [feedback, setFeedback] = useState<ActionFeedback>(null);
+  useEffect(() => { Promise.all([adminApi.listProjects(), adminApi.listEmployees()]).then(([p, w]) => { setProjects(p); setWorkers(w); }).catch((reason) => setError(reason.message)); }, []);
+  const download = async () => { if (exporting) return; setExporting(true); setFeedback({ type: 'info', message: km.actions.exporting }); try { const csv = await adminApi.exportAttendanceCsv(filters as any); const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'attendance-report.csv'; link.click(); URL.revokeObjectURL(url); setFeedback({ type: 'success', message: km.actions.exported }); } catch (reason: any) { setFeedback({ type: 'error', message: reason.message || km.attendance.requestFailed }); } finally { setExporting(false); } };
+  return <main className="space-y-6"><header><p className="text-[11px] font-black uppercase text-[var(--portal-primary)]">{km.admin.interfaceReports}</p><h1 className="mt-2 text-3xl font-black">{km.admin.reportsTitle}</h1><p className="mt-2 text-sm text-slate-600">{km.admin.reportsSubtitle}</p></header>{error && <p className="rounded-2xl bg-rose-50 p-4 text-rose-800">{error}</p>}<ActionStatus feedback={feedback}/><section className="grid gap-4 rounded-[28px] border border-slate-200 bg-white p-6 md:grid-cols-2 xl:grid-cols-4"><Field label={km.admin.startDate}><input type="date" value={filters.startDate} onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}/></Field><Field label={km.admin.endDate}><input type="date" value={filters.endDate} onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}/></Field><Field label={km.admin.project}><select value={filters.projectId} onChange={(e) => setFilters({ ...filters, projectId: e.target.value })}><option value="">—</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label={km.admin.worker}><select value={filters.employeeId} onChange={(e) => setFilters({ ...filters, employeeId: e.target.value })}><option value="">—</option>{workers.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}</select></Field><label className="flex items-center gap-3 text-sm font-bold"><input type="checkbox" checked={filters.exceptionsOnly} onChange={(e) => setFilters({ ...filters, exceptionsOnly: e.target.checked })}/>{km.admin.exceptionsOnly}</label><button disabled={exporting} onClick={() => void download()} className="flex items-center justify-center gap-2 rounded-xl bg-[var(--portal-primary)] px-5 py-3 font-black text-white md:col-start-2 xl:col-start-4 disabled:cursor-wait disabled:opacity-60"><Download size={17}/>{exporting ? km.actions.exporting : km.admin.exportCsv}</button></section></main>;
+}
+function Field({ label, children }: { label: string; children: React.ReactElement }) { return <label className="text-xs font-black text-slate-600">{label}<span className="mt-2 block [&>*]:w-full [&>*]:rounded-xl [&>*]:border [&>*]:border-slate-200 [&>*]:bg-slate-50 [&>*]:p-3 [&>*]:text-sm">{children}</span></label>; }

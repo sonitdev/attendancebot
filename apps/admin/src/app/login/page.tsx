@@ -1,190 +1,107 @@
 'use client';
 
 import React, { useState } from 'react';
+import { AlertCircle, ArrowRight, Building2, HardHat } from 'lucide-react';
+import { km } from '@workforce/contracts';
 import { useAuth } from '@/lib/auth-context';
-import { BrandRail } from '@/components/login/brand-rail';
-import { AlertCircle, ArrowRight, ShieldCheck, HardHat, Check } from 'lucide-react';
-
-const devPersonas = [
-  { role: 'Owner / System Admin', email: 'admin@acme.com', icon: '🛡️', badge: 'Full Control' },
-  { role: 'HR & Workforce Manager', email: 'hr@acme.com', icon: '👤', badge: 'Employees & Roles' },
-  { role: 'Project Manager', email: 'pm@acme.com', icon: '🏗️', badge: 'Projects & Sites' },
-  { role: 'Site Manager / Supervisor', email: 'sitemanager@acme.com', icon: '📍', badge: 'Site Attendance' },
-];
 
 export default function LoginPage() {
-  const { login } = useAuth();
-  const [orgSlug, setOrgSlug] = useState('acme');
-  const [email, setEmail] = useState('admin@acme.com');
+  const { login, registerOrganization } = useAuth();
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [organizationName, setOrganizationName] = useState('');
+  const [orgSlug, setOrgSlug] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError(null);
     setIsSubmitting(true);
     try {
-      await login({ orgSlug, email });
-    } catch (err: any) {
-      setError(err.message || 'Failed to authenticate');
+      if (mode === 'register') {
+        await registerOrganization({ organizationName, orgSlug, email, password });
+      } else {
+        await login({ orgSlug, email, password });
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'AUTHENTICATION_FAILED');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleRoleLogin = async (roleEmail: string) => {
-    setOrgSlug('acme');
-    setEmail(roleEmail);
+  const changeMode = (next: 'login' | 'register') => {
+    setMode(next);
     setError(null);
-    setIsSubmitting(true);
-    try {
-      await login({ orgSlug: 'acme', email: roleEmail });
-    } catch (err: any) {
-      setError(err.message || 'Failed to authenticate');
-    } finally {
-      setIsSubmitting(false);
-    }
+    setPassword('');
   };
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center p-4 sm:p-6 lg:p-10 bg-[#f2f6f4]">
-      <div className="relative z-10 flex w-full max-w-6xl flex-col items-center justify-center gap-6 xl:flex-row xl:items-center">
-        {/* Main Authentication Glass Card */}
-        <div className="grid w-full max-w-4xl items-stretch overflow-hidden rounded-[36px] border border-white/95 bg-white/80 p-3 shadow-[inset_0_2px_1px_rgba(255,255,255,1),0_28px_80px_-15px_rgba(15,23,42,0.08)] backdrop-blur-[50px] saturate-[190%] lg:grid-cols-[0.95fr_1.05fr] lg:gap-3">
-          <BrandRail />
-
-          {/* Form & Dev Control Card */}
-          <div className="flex w-full flex-col justify-between rounded-[28px] bg-white p-6 shadow-xs sm:p-7 lg:p-8">
-            <div className="flex flex-col gap-4">
-              {/* Header Logo & Secure Badge */}
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0 flex items-center space-x-2">
-                  <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-[#023F26] text-white">
-                    <HardHat className="w-4 h-4 text-[#c4d701]" />
-                  </div>
-                  <div>
-                    <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-tight">
-                      Workforce Portal
-                    </h1>
-                    <p className="text-[11px] font-semibold text-slate-500">Site Attendance & Operations</p>
-                  </div>
-                </div>
-                <span className="rounded-full border-2 border-white bg-[#023F26] px-3 py-1 text-[11px] font-bold text-white shadow-xs">
-                  Secure access
-                </span>
-              </div>
-
-              <div>
-                <h2 className="text-xl font-bold tracking-tight text-slate-900">Welcome back</h2>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Manage workforce profiles, sites, geofences, and attendance records.
-                </p>
-              </div>
-
-              {error && (
-                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-start space-x-2 text-rose-800 text-xs font-medium">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                  <span>{error}</span>
-                </div>
-              )}
-
-              {/* Direct Credentials Login Form */}
-              <form onSubmit={handleSubmit} className="space-y-3 pt-1">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Organization Slug
-                  </label>
-                  <input
-                    type="text"
-                    value={orgSlug}
-                    onChange={(e) => setOrgSlug(e.target.value)}
-                    required
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-900 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#023F26]"
-                    placeholder="acme"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Corporate Email Address
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-900 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-[#023F26]"
-                    placeholder="admin@acme.com"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-2.5 px-4 border-2 border-white bg-[#023F26] hover:bg-[#012919] text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
-                >
-                  <span>{isSubmitting ? 'Authenticating...' : 'Sign In to Portal'}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              </form>
-            </div>
-
-            {/* Bottom Footer: Powered by Tossana & Cambodia Flag */}
-            <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 pt-4 text-[11px] text-slate-500">
-              <div className="flex items-center space-x-1.5 font-semibold text-slate-600">
-                <span>Powered by</span>
-                <span className="font-extrabold text-[#023F26] tracking-tight">TOSSANA</span>
-              </div>
-              <span className="inline-flex items-center gap-1.5 rounded-full border-2 border-white bg-[#023F26] px-3 py-1 text-[10px] font-bold text-white shadow-xs">
-                <span className="text-xs">🇰🇭</span>
-                <span>Proud of Cambodia</span>
-              </span>
-            </div>
+    <main className="grid min-h-screen place-items-center bg-[#edf3ef] p-4 sm:p-8">
+      <section className="w-full max-w-md overflow-hidden rounded-[32px] border border-white bg-white shadow-[0_24px_70px_-32px_rgba(2,63,38,0.35)]">
+        <header className="bg-[#023F26] px-7 py-7 text-white">
+          <div className="mb-5 grid size-12 place-items-center rounded-2xl bg-white/10">
+            <HardHat className="size-6 text-[#C4D701]" />
           </div>
+          <h1 className="text-2xl font-black">{km.auth.portalTitle}</h1>
+          <p className="mt-2 text-sm leading-6 text-emerald-50/80">
+            {mode === 'register' ? km.auth.registrationIntro : km.auth.portalSubtitle}
+          </p>
+        </header>
+
+        <div className="p-7">
+          <div className="mb-6 grid grid-cols-2 rounded-2xl bg-slate-100 p-1">
+            <button type="button" onClick={() => changeMode('login')} className={`rounded-xl px-3 py-2.5 text-sm font-bold ${mode === 'login' ? 'bg-white text-[#023F26] shadow-sm' : 'text-slate-500'}`}>
+              {km.auth.signIn}
+            </button>
+            <button type="button" onClick={() => changeMode('register')} className={`rounded-xl px-3 py-2.5 text-sm font-bold ${mode === 'register' ? 'bg-white text-[#023F26] shadow-sm' : 'text-slate-500'}`}>
+              {km.auth.createOrganization}
+            </button>
+          </div>
+
+          {error && (
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-800">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={submit} className="space-y-4">
+            {mode === 'register' && (
+              <label className="block text-sm font-bold text-slate-700">
+                {km.auth.organizationName}
+                <div className="relative mt-1.5">
+                  <Building2 className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                  <input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} required minLength={2} maxLength={120} className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm outline-none focus:border-[#023F26] focus:ring-2 focus:ring-[#023F26]/10" />
+                </div>
+              </label>
+            )}
+
+            <label className="block text-sm font-bold text-slate-700">
+              {km.auth.organizationSlug}
+              <input value={orgSlug} onChange={(event) => setOrgSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} required minLength={2} maxLength={60} placeholder="your-company" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#023F26] focus:ring-2 focus:ring-[#023F26]/10" />
+            </label>
+
+            <label className="block text-sm font-bold text-slate-700">
+              {km.auth.email}
+              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#023F26] focus:ring-2 focus:ring-[#023F26]/10" />
+            </label>
+
+            <label className="block text-sm font-bold text-slate-700">
+              {km.auth.password}
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={12} maxLength={128} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#023F26] focus:ring-2 focus:ring-[#023F26]/10" />
+              <span className="mt-1 block text-xs font-medium text-slate-400">{km.auth.passwordHint}</span>
+            </label>
+
+            <button type="submit" disabled={isSubmitting} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#023F26] px-4 py-3.5 text-sm font-black text-white transition hover:bg-[#012c1b] disabled:cursor-not-allowed disabled:opacity-60">
+              {isSubmitting ? (mode === 'register' ? km.auth.creating : km.auth.signingIn) : (mode === 'register' ? km.auth.createOrganization : km.auth.signIn)}
+              {!isSubmitting && <ArrowRight className="size-4" />}
+            </button>
+          </form>
         </div>
-
-        {/* Split-out Dev Bypass Aside (Independent Floating Card) */}
-        <aside className="w-full max-w-sm shrink-0 xl:w-80">
-          <div className="rounded-[28px] border border-white/90 bg-white/90 p-5 shadow-lg backdrop-blur-xl space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <div className="flex items-center space-x-1.5 text-[#023F26] font-bold text-xs uppercase tracking-wider">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>Dev Bypass Login</span>
-              </div>
-              <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-mono font-bold">
-                Port 5132
-              </span>
-            </div>
-
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Click any role below to instantly log in and test management RBAC capabilities:
-            </p>
-
-            <div className="space-y-2">
-              {devPersonas.map((p) => (
-                <button
-                  key={p.email}
-                  type="button"
-                  onClick={() => handleRoleLogin(p.email)}
-                  disabled={isSubmitting}
-                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50 hover:bg-[#023F26]/8 border border-slate-200/80 hover:border-[#023F26]/30 text-slate-800 text-xs font-semibold transition-all group text-left cursor-pointer"
-                >
-                  <div className="flex items-center space-x-2.5">
-                    <span className="text-lg">{p.icon}</span>
-                    <div>
-                      <div className="font-bold text-slate-900 group-hover:text-[#023F26]">
-                        {p.role}
-                      </div>
-                      <div className="text-[10px] text-slate-500 font-mono">{p.email}</div>
-                    </div>
-                  </div>
-                  <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#023F26] group-hover:translate-x-0.5 transition-transform" />
-                </button>
-              ))}
-            </div>
-          </div>
-        </aside>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

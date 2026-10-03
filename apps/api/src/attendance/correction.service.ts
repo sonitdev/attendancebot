@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { AttendanceStatus, type Prisma } from '@prisma/client';
 import type {
   AttendanceExceptionItem,
   AttendanceExportQuery,
@@ -14,6 +14,7 @@ import type {
   ResolveCorrectionInput,
 } from '@workforce/contracts';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type { AdminDataScope } from '../auth/admin-scope.service.js';
 
 function escapeCsvCell(val: unknown): string {
   if (val === null || val === undefined) return '';
@@ -54,36 +55,24 @@ export class CorrectionService {
   async listExceptions(
     organizationId: string,
     query?: { siteId?: string; projectId?: string; status?: string },
+    scope?: AdminDataScope,
   ): Promise<AttendanceExceptionItem[]> {
     const where: Prisma.AttendanceRecordWhereInput = {
       organizationId,
-      ...(query?.siteId ? { assignment: { siteId: query.siteId } } : {}),
-      ...(query?.projectId ? { assignment: { site: { projectId: query.projectId } } } : {}),
-      ...(query?.status
-        ? { status: query.status as any }
-        : {
-            OR: [
-              {
-                status: {
-                  in: [
-                    'MISSING_CHECKOUT',
-                    'OUTSIDE_GEOFENCE',
-                    'LOW_ACCURACY',
-                    'LATE',
-                    'PENDING_REVIEW',
-                    'ABSENT',
-                  ],
-                },
-              },
-              {
-                corrections: {
-                  some: {
-                    status: 'PENDING',
-                  },
-                },
-              },
-            ],
-          }),
+      AND: [
+        ...(!scope || scope.unrestricted ? [] : [{ OR: [{ projectId: { in: scope.projectIds } }, { adjustedProjectId: { in: scope.projectIds } }, { siteId: { in: scope.siteIds } }] }]),
+        ...(query?.siteId ? [{ assignment: { siteId: query.siteId } }] : []),
+        ...(query?.projectId ? [{ OR: [{ projectId: query.projectId }, { adjustedProjectId: query.projectId }] }] : []),
+        query?.status
+          ? { OR: [{ status: query.status as any }, { adjustedStatus: query.status as any }] }
+          : {
+              OR: [
+                { status: { in: ['MISSING_CHECKOUT', 'OUTSIDE_GEOFENCE', 'LOW_ACCURACY', 'LATE', 'PENDING_REVIEW', 'ABSENT'] } },
+                { adjustedStatus: { in: ['MISSING_CHECKOUT', 'OUTSIDE_GEOFENCE', 'LOW_ACCURACY', 'LATE', 'PENDING_REVIEW', 'ABSENT'] } },
+                { corrections: { some: { status: 'PENDING' } } },
+              ],
+            },
+      ],
     };
 
     const records = await this.prisma.attendanceRecord.findMany({
@@ -100,17 +89,31 @@ export class CorrectionService {
           },
         },
         assignment: {
-          include: {
-            site: {
-              include: {
-                project: true,
-              },
-            },
-            schedule: true,
-          },
+          select: { schedule: { select: { name: true, startTime: true, endTime: true } } },
         },
+        site: { select: { id: true, name: true, timezone: true } },
+        project: { select: { id: true, name: true, code: true } },
+        adjustedProject: { select: { id: true, name: true, code: true } },
         corrections: {
           orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            attendanceRecordId: true,
+            originalCheckInAt: true,
+            originalCheckOutAt: true,
+            originalStatus: true,
+            status: true,
+            reason: true,
+            correctedCheckInAt: true,
+            correctedCheckOutAt: true,
+            correctedStatus: true,
+            originalProjectId: true,
+            correctedProjectId: true,
+            requestedByUserId: true,
+            approvedByUserId: true,
+            createdAt: true,
+            resolvedAt: true,
+          },
         },
       },
     });
@@ -125,23 +128,23 @@ export class CorrectionService {
         avatarUrl: rec.employee.avatarUrl,
       },
       site: {
-        id: rec.assignment.site.id,
-        name: rec.assignment.site.name,
-        timezone: rec.assignment.site.timezone,
+        id: rec.site.id,
+        name: rec.site.name,
+        timezone: rec.site.timezone,
       },
       project: {
-        id: rec.assignment.site.project.id,
-        name: rec.assignment.site.project.name,
-        code: rec.assignment.site.project.code,
+        id: (rec.adjustedProject ?? rec.project).id,
+        name: (rec.adjustedProject ?? rec.project).name,
+        code: (rec.adjustedProject ?? rec.project).code,
       },
       schedule: {
         name: rec.assignment.schedule.name,
         startTime: rec.assignment.schedule.startTime,
         endTime: rec.assignment.schedule.endTime,
       },
-      status: rec.status,
-      checkInAt: rec.checkInAt ? rec.checkInAt.toISOString() : null,
-      checkOutAt: rec.checkOutAt ? rec.checkOutAt.toISOString() : null,
+      status: rec.adjustedStatus ?? rec.status,
+      checkInAt: (rec.adjustedCheckInAt ?? rec.checkInAt)?.toISOString() ?? null,
+      checkOutAt: (rec.adjustedCheckOutAt ?? rec.checkOutAt)?.toISOString() ?? null,
       checkInLatitude: rec.checkInLatitude ? Number(rec.checkInLatitude) : null,
       checkInLongitude: rec.checkInLongitude ? Number(rec.checkInLongitude) : null,
       checkInAccuracyMeters: rec.checkInAccuracyMeters ? Number(rec.checkInAccuracyMeters) : null,
@@ -155,16 +158,18 @@ export class CorrectionService {
         employeeId: rec.employee.id,
         employeeName: rec.employee.fullName,
         employeeCode: rec.employee.employeeCode,
-        siteName: rec.assignment.site.name,
+        siteName: rec.site.name,
         attendanceDate: rec.attendanceDate.toISOString().slice(0, 10),
-        originalCheckInAt: rec.checkInAt ? rec.checkInAt.toISOString() : null,
-        originalCheckOutAt: rec.checkOutAt ? rec.checkOutAt.toISOString() : null,
-        originalStatus: rec.status,
+        originalCheckInAt: c.originalCheckInAt ? c.originalCheckInAt.toISOString() : rec.checkInAt ? rec.checkInAt.toISOString() : null,
+        originalCheckOutAt: c.originalCheckOutAt ? c.originalCheckOutAt.toISOString() : rec.checkOutAt ? rec.checkOutAt.toISOString() : null,
+        originalStatus: c.originalStatus ?? rec.status,
         status: c.status,
         reason: c.reason,
         correctedCheckInAt: c.correctedCheckInAt ? c.correctedCheckInAt.toISOString() : null,
         correctedCheckOutAt: c.correctedCheckOutAt ? c.correctedCheckOutAt.toISOString() : null,
         correctedStatus: c.correctedStatus,
+        originalProjectId: c.originalProjectId ?? rec.projectId,
+        correctedProjectId: c.correctedProjectId,
         requestedByUserId: c.requestedByUserId,
         approvedByUserId: c.approvedByUserId,
         createdAt: c.createdAt.toISOString(),
@@ -208,6 +213,12 @@ export class CorrectionService {
     if (correctedCheckOutAt && isNaN(correctedCheckOutAt.getTime())) {
       throw new BadRequestException('INVALID_CHECK_OUT_DATE');
     }
+    if (input.correctedProjectId) {
+      const correctedProject = await this.prisma.project.findFirst({
+        where: { id: input.correctedProjectId, organizationId, status: { not: 'CANCELLED' } },
+      });
+      if (!correctedProject) throw new BadRequestException('INVALID_CORRECTED_PROJECT');
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const correction = await tx.attendanceCorrection.create({
@@ -220,6 +231,11 @@ export class CorrectionService {
           correctedCheckInAt,
           correctedCheckOutAt,
           correctedStatus: input.correctedStatus,
+          originalCheckInAt: record.checkInAt,
+          originalCheckOutAt: record.checkOutAt,
+          originalStatus: record.status,
+          originalProjectId: record.projectId,
+          correctedProjectId: input.correctedProjectId,
         },
       });
 
@@ -235,6 +251,7 @@ export class CorrectionService {
             proposedStatus: input.correctedStatus,
             proposedCheckInAt: input.correctedCheckInAt,
             proposedCheckOutAt: input.correctedCheckOutAt,
+            proposedProjectId: input.correctedProjectId,
             requestedByUserId: actorUserId,
           },
         },
@@ -270,6 +287,8 @@ export class CorrectionService {
         correctedCheckInAt: correction.correctedCheckInAt ? correction.correctedCheckInAt.toISOString() : null,
         correctedCheckOutAt: correction.correctedCheckOutAt ? correction.correctedCheckOutAt.toISOString() : null,
         correctedStatus: correction.correctedStatus,
+        originalProjectId: correction.originalProjectId,
+        correctedProjectId: correction.correctedProjectId,
         requestedByUserId: correction.requestedByUserId,
         approvedByUserId: correction.approvedByUserId,
         createdAt: correction.createdAt.toISOString(),
@@ -338,16 +357,19 @@ export class CorrectionService {
           );
         }
 
-        // Apply correction to record without altering GPS evidence
+        // Preserve source facts; approved values are stored in explicit adjusted
+        // fields and the correction row retains its before/after snapshot.
         await tx.attendanceRecord.update({
           where: { id: record.id },
           data: {
-            ...(correction.correctedStatus ? { status: correction.correctedStatus } : {}),
-            ...(correction.correctedCheckInAt ? { checkInAt: correction.correctedCheckInAt } : {}),
-            ...(correction.correctedCheckOutAt ? { checkOutAt: correction.correctedCheckOutAt } : {}),
+            ...(correction.correctedStatus ? { adjustedStatus: correction.correctedStatus } : {}),
+            ...(correction.correctedCheckInAt ? { adjustedCheckInAt: correction.correctedCheckInAt } : {}),
+            ...(correction.correctedCheckOutAt ? { adjustedCheckOutAt: correction.correctedCheckOutAt } : {}),
+            ...(correction.correctedProjectId ? { adjustedProjectId: correction.correctedProjectId } : {}),
             workDurationMinutes,
           },
         });
+        await tx.attendanceCorrection.update({ where: { id: correction.id }, data: { resolutionNote: input.note ?? null } });
 
         await tx.attendanceEvent.create({
           data: {
@@ -361,6 +383,7 @@ export class CorrectionService {
               resolutionNote: input.note,
               approvedByUserId: actorUserId,
               newStatus: correction.correctedStatus,
+              newProjectId: correction.correctedProjectId,
             },
           },
         });
@@ -396,6 +419,8 @@ export class CorrectionService {
           correctedCheckInAt: updatedCorrection.correctedCheckInAt ? updatedCorrection.correctedCheckInAt.toISOString() : null,
           correctedCheckOutAt: updatedCorrection.correctedCheckOutAt ? updatedCorrection.correctedCheckOutAt.toISOString() : null,
           correctedStatus: updatedCorrection.correctedStatus,
+          originalProjectId: correction.originalProjectId,
+          correctedProjectId: correction.correctedProjectId,
           requestedByUserId: updatedCorrection.requestedByUserId,
           approvedByUserId: updatedCorrection.approvedByUserId,
           createdAt: updatedCorrection.createdAt.toISOString(),
@@ -456,6 +481,8 @@ export class CorrectionService {
           correctedCheckInAt: updatedCorrection.correctedCheckInAt ? updatedCorrection.correctedCheckInAt.toISOString() : null,
           correctedCheckOutAt: updatedCorrection.correctedCheckOutAt ? updatedCorrection.correctedCheckOutAt.toISOString() : null,
           correctedStatus: updatedCorrection.correctedStatus,
+          originalProjectId: correction.originalProjectId,
+          correctedProjectId: correction.correctedProjectId,
           requestedByUserId: updatedCorrection.requestedByUserId,
           approvedByUserId: updatedCorrection.approvedByUserId,
           createdAt: updatedCorrection.createdAt.toISOString(),
@@ -472,19 +499,32 @@ export class CorrectionService {
   async exportAttendanceRecords(
     organizationId: string,
     query: AttendanceExportQuery,
+    scope?: AdminDataScope,
   ): Promise<{ format: 'csv' | 'json'; data: string | AttendanceExportRow[] }> {
+    const exceptionStatuses: AttendanceStatus[] = [
+      AttendanceStatus.MISSING_CHECKOUT,
+      AttendanceStatus.OUTSIDE_GEOFENCE,
+      AttendanceStatus.LOW_ACCURACY,
+      AttendanceStatus.LATE,
+      AttendanceStatus.PENDING_REVIEW,
+      AttendanceStatus.ABSENT,
+    ];
     const where: Prisma.AttendanceRecordWhereInput = {
       organizationId,
-      ...(query.startDate || query.endDate
-        ? {
-            attendanceDate: {
-              ...(query.startDate ? { gte: new Date(`${query.startDate}T00:00:00.000Z`) } : {}),
-              ...(query.endDate ? { lte: new Date(`${query.endDate}T23:59:59.999Z`) } : {}),
-            },
-          }
-        : {}),
-      ...(query.siteId ? { assignment: { siteId: query.siteId } } : {}),
-      ...(query.projectId ? { assignment: { site: { projectId: query.projectId } } } : {}),
+      AND: [
+        ...(!scope || scope.unrestricted ? [] : [{ OR: [{ projectId: { in: scope.projectIds } }, { adjustedProjectId: { in: scope.projectIds } }, { siteId: { in: scope.siteIds } }] }]),
+        ...(query.startDate || query.endDate ? [{ attendanceDate: {
+          ...(query.startDate ? { gte: new Date(`${query.startDate}T00:00:00.000Z`) } : {}),
+          ...(query.endDate ? { lte: new Date(`${query.endDate}T23:59:59.999Z`) } : {}),
+        } }] : []),
+        ...(query.siteId ? [{ siteId: query.siteId }] : []),
+        ...(query.projectId ? [{ OR: [{ projectId: query.projectId }, { adjustedProjectId: query.projectId }] }] : []),
+        ...(query.employeeId ? [{ employeeId: query.employeeId }] : []),
+        ...(query.exceptionsOnly ? [{ OR: [
+          { status: { in: exceptionStatuses } },
+          { adjustedStatus: { in: exceptionStatuses } },
+        ] }] : []),
+      ],
     };
 
     const records = await this.prisma.attendanceRecord.findMany({
@@ -492,6 +532,7 @@ export class CorrectionService {
       orderBy: { attendanceDate: 'desc' },
       include: {
         employee: true,
+        site: true,
         assignment: {
           include: {
             site: {
@@ -505,30 +546,36 @@ export class CorrectionService {
         corrections: {
           select: { id: true },
         },
+        project: true,
+        adjustedProject: true,
       },
     });
 
     const rows: AttendanceExportRow[] = records.map((r) => {
-      const siteTz = r.assignment.site.timezone;
+      const siteTz = r.site?.timezone ?? r.assignment.site.timezone;
       const minutes = r.workDurationMinutes ?? 0;
       const hours = Math.floor(minutes / 60);
       const remMinutes = minutes % 60;
+      const effectiveProject = r.adjustedProject ?? r.project;
+      const effectiveCheckIn = r.adjustedCheckInAt ?? r.checkInAt;
+      const effectiveCheckOut = r.adjustedCheckOutAt ?? r.checkOutAt;
+      const effectiveStatus = r.adjustedStatus ?? r.status;
       return {
         recordId: r.id,
         attendanceDate: r.attendanceDate.toISOString().slice(0, 10),
         employeeCode: r.employee.employeeCode,
         employeeName: r.employee.fullName,
-        projectCode: r.assignment.site.project.code,
-        projectName: r.assignment.site.project.name,
-        siteName: r.assignment.site.name,
+        projectCode: effectiveProject.code,
+        projectName: effectiveProject.name,
+        siteName: r.site?.name ?? r.assignment.site.name,
         siteTimezone: siteTz,
         scheduledStart: r.assignment.schedule.startTime,
         scheduledEnd: r.assignment.schedule.endTime,
-        checkInLocalTime: formatSiteDateTime(r.checkInAt, siteTz),
-        checkOutLocalTime: formatSiteDateTime(r.checkOutAt, siteTz),
+        checkInLocalTime: formatSiteDateTime(effectiveCheckIn, siteTz),
+        checkOutLocalTime: formatSiteDateTime(effectiveCheckOut, siteTz),
         workDurationMinutes: r.workDurationMinutes,
         workHoursFormatted: `${hours}h ${remMinutes}m`,
-        status: r.status,
+        status: effectiveStatus,
         checkInVerification: r.checkInVerification,
         checkInDistanceMeters: r.checkInDistanceMeters ? Number(r.checkInDistanceMeters) : null,
         hasCorrections: r.corrections.length > 0,

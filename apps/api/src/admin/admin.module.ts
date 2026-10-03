@@ -4,11 +4,12 @@ import { BulkAssignmentsController } from '../assignments/bulk-assignments.contr
 import { BulkAssignmentsService } from '../assignments/bulk-assignments.service.js';
 import { MapLinkResolverService } from './map-link-resolver.service.js';
 import { AdminService } from './admin.service.js';
+import { JobsModule } from '../jobs/jobs.module.js';
 
 @Module({
+  imports: [JobsModule],
   controllers: [AdminController, BulkAssignmentsController],
   providers: [AdminService, MapLinkResolverService, BulkAssignmentsService],
   exports: [AdminService, BulkAssignmentsService],
 })
 export class AdminModule {}
-

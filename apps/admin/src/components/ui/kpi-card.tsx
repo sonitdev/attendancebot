@@ -145,7 +145,7 @@ export function KpiCard({
 
       {/* Middle: Big bold metric number */}
       <div className="my-auto py-0.5">
-        <div className="text-[26px] sm:text-[30px] font-extrabold text-slate-900 tracking-tight leading-none">
+        <div className="text-[26px] sm:text-[30px] font-extrabold text-slate-900 leading-none">
           {isLoading ? (
             <span className="inline-block w-16 h-7 bg-slate-100 rounded-md animate-pulse" />
           ) : (

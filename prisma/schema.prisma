@@ -20,6 +20,7 @@ enum ProjectStatus {
   PAUSED
   COMPLETED
   CANCELLED
+  ARCHIVED
 }
 
 enum AssignmentStatus {
@@ -106,10 +107,27 @@ enum BulkResultStatus {
   FAILED
 }
 
+enum TelegramDeliveryKind {
+  TEXT
+  PHOTO
+  SALES_REPORT
+}
+
+enum TelegramDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
 model Organization {
   id String @id @default(cuid())
   slug String @unique
   name String
+  logoUrl String?
+  brandPrimaryColor String @default("#023F26")
+  brandAccentColor String @default("#C4D701")
+  defaultLocale String @default("km")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   employees Employee[]
@@ -117,6 +135,7 @@ model Organization {
   positionHistories EmployeePositionHistory[]
   positionRequests PositionRequest[]
   registrationRequests RegistrationRequest[]
+  pendingTelegramProjectSelections PendingTelegramProjectSelection[]
   workerGroups WorkerGroup[]
   workerGroupMembers WorkerGroupMember[]
   bulkAssignmentBatches BulkAssignmentBatch[]
@@ -126,23 +145,59 @@ model Organization {
   roles Role[]
   permissions Permission[]
   telegramAccounts TelegramAccount[]
+  telegramOwners TelegramOrganizationOwner[]
   sites Site[]
   assignments Assignment[]
   attendanceRecords AttendanceRecord[]
   attendanceEvents AttendanceEvent[]
   attendanceRequests AttendanceRequest[]
   attendanceCorrections AttendanceCorrection[]
+  visitLogs VisitLog[]
+  telegramReportGroups TelegramReportGroup[]
+  workerProjects WorkerProject[]
+  telegramDeliveries TelegramDelivery[]
   auditLogs AuditLog[]
+  outlets Outlet[]
+  dailySalesReports DailySalesReport[]
+  telegramConversationStates TelegramConversationState[]
+  userProjectScopes UserProjectScope[]
+  userSiteScopes UserSiteScope[]
+}
+
+// A real organization owner can pair their Telegram account without becoming a
+// worker. This is the secure bridge required before a Telegram group can be
+// attached to a newly registered organization.
+model TelegramOrganizationOwner {
+  id String @id @default(cuid())
+  organizationId String @unique
+  userId String
+  setupCode String @unique
+  setupCodeExpiresAt DateTime
+  setupCodeUsedAt DateTime?
+  telegramUserId String? @unique
+  telegramUsername String?
+  pairedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([setupCode, setupCodeExpiresAt])
 }
 
 model User {
   id String @id @default(cuid())
   organizationId String
   email String
+  passwordHash String?
   status LifecycleStatus @default(ACTIVE)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   roles UserRole[]
   requestedBulkBatches BulkAssignmentBatch[]
+  projectScopes UserProjectScope[]
+  siteScopes UserSiteScope[]
+  telegramOwnerPairings TelegramOrganizationOwner[]
   @@unique([organizationId, email])
 }
 
@@ -261,6 +316,25 @@ model RegistrationRequest {
   @@index([organizationId, telegramUserId])
 }
 
+// The group context selected by a worker before they have completed private
+// bot registration.  It deliberately stores only the next-project intent;
+// it never changes historical attendance or an existing project connection.
+model PendingTelegramProjectSelection {
+  id String @id @default(cuid())
+  organizationId String
+  telegramUserId String
+  projectId String
+  sourceChatId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, projectId])
+  @@unique([organizationId, telegramUserId])
+}
+
 model WorkerGroup {
   id String @id @default(cuid())
   organizationId String
@@ -273,6 +347,7 @@ model WorkerGroup {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   members WorkerGroupMember[]
+  telegramReportGroups TelegramReportGroup[]
 
   @@unique([organizationId, code])
   @@index([organizationId, status])
@@ -349,9 +424,11 @@ model Employee {
   jobTitle String?
   avatarUrl String?
   currentPositionId String?
+  currentProjectId String?
   status LifecycleStatus @default(ACTIVE)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   currentPosition Position? @relation("EmployeeCurrentPosition", fields: [currentPositionId], references: [id], onDelete: SetNull)
+  currentProject Project? @relation("EmployeeCurrentProject", fields: [currentProjectId], references: [id], onDelete: SetNull)
   positionHistory EmployeePositionHistory[]
   positionRequests PositionRequest[]
   workerGroupMemberships WorkerGroupMember[]
@@ -359,6 +436,9 @@ model Employee {
   telegramAccount TelegramAccount?
   assignments Assignment[]
   attendance AttendanceRecord[]
+  visitLogs VisitLog[]
+  projectConnections WorkerProject[]
+  dailySalesReports DailySalesReport[]
   @@unique([organizationId, employeeCode])
   @@unique([organizationId, normalizedPhone])
   @@index([organizationId, status])
@@ -369,7 +449,7 @@ model TelegramAccount {
   id String @id @default(cuid())
   organizationId String
   employeeId String @unique
-  telegramUserId String @unique
+  telegramUserId String
   username String?
   firstName String?
   lastName String?
@@ -380,6 +460,32 @@ model TelegramAccount {
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   @@index([organizationId, telegramUserId])
+  @@index([telegramUserId])
+  @@unique([organizationId, telegramUserId])
+}
+
+// A group is connected by a verified worker, but remains inactive until an
+// administrator deliberately assigns it to a site or team. This prevents a
+// chat from receiving organization attendance data merely because the bot was
+// added to it.
+model TelegramReportGroup {
+  id String @id @default(cuid())
+  organizationId String
+  chatId String
+  title String?
+  connectedByEmployeeId String?
+  siteId String?
+  workerGroupId String?
+  status LifecycleStatus @default(INACTIVE)
+  connectedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  site Site? @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  workerGroup WorkerGroup? @relation(fields: [workerGroupId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@unique([organizationId, chatId])
 }
 
 model Project {
@@ -387,11 +493,51 @@ model Project {
   organizationId String
   code String
   name String
+  telegramChatId String?
+  workMode String @default("SITE")
+  telegramConnectionStatus String @default("PENDING")
+  telegramConnectedAt DateTime?
+  telegramHealthCheckedAt DateTime?
+  telegramHealthError String?
   status ProjectStatus @default(DRAFT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   sites Site[]
+  currentWorkers Employee[] @relation("EmployeeCurrentProject")
+  workerConnections WorkerProject[]
+  attendanceRecords AttendanceRecord[]
+  adjustedAttendanceRecords AttendanceRecord[] @relation("AdjustedAttendanceProject")
+  visitLogs VisitLog[]
+  pendingTelegramSelections PendingTelegramProjectSelection[]
+  correctionProjects AttendanceCorrection[] @relation("CorrectionProject")
+  outlets Outlet[]
+  @@unique([organizationId, telegramChatId])
+  dailySalesReports DailySalesReport[]
+  userScopes UserProjectScope[]
   @@unique([organizationId, code])
   @@index([organizationId, status])
+}
+
+model WorkerProject {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String
+  projectId String
+  connectedAt DateTime @default(now())
+  lastSelectedAt DateTime?
+  authorizationStatus String @default("AUTHORIZED")
+  lastVerifiedAt DateTime?
+  revokedAt DateTime?
+  lastVerificationResult String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, projectId])
+  @@index([organizationId, employeeId])
+  @@index([organizationId, projectId])
 }
 
 model Site {
@@ -407,7 +553,44 @@ model Site {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
   assignments Assignment[]
+  visitLogs VisitLog[]
   bulkAssignmentBatches BulkAssignmentBatch[]
+  telegramReportGroups TelegramReportGroup[]
+  attendanceRecords AttendanceRecord[]
+  userScopes UserSiteScope[]
+  @@index([organizationId, projectId, status])
+}
+
+model UserProjectScope {
+  id String @id @default(cuid())
+  organizationId String
+  userId String
+  projectId String
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([organizationId, userId])
+  @@index([organizationId, projectId])
+}
+
+model UserSiteScope {
+  id String @id @default(cuid())
+  organizationId String
+  userId String
+  siteId String
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, siteId])
+  @@index([organizationId, userId])
+  @@index([organizationId, siteId])
 }
 
 model WorkSchedule {
@@ -437,9 +620,11 @@ model Assignment {
   site Site @relation(fields: [siteId], references: [id], onDelete: Restrict)
   schedule WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
   attendance AttendanceRecord[]
+  visitLogs VisitLog[]
   bulkAssignmentResults BulkAssignmentResult[]
   @@index([employeeId, startsOn, endsOn, status])
   @@index([organizationId, employeeId, status, startsOn, endsOn])
+  @@index([organizationId, siteId, startsOn, status])
 }
 
 model AttendanceRecord {
@@ -447,6 +632,9 @@ model AttendanceRecord {
   organizationId String
   employeeId String
   assignmentId String
+  projectId String
+  siteId String
+  telegramChatId String?
   attendanceDate DateTime @db.Date
   checkInAt DateTime?
   checkOutAt DateTime?
@@ -456,23 +644,66 @@ model AttendanceRecord {
   checkInDistanceMeters Decimal? @db.Decimal(10, 2)
   checkInVerification VerificationStatus?
   checkInPhotoPath String?
+  checkInStatus AttendanceStatus?
   checkOutLatitude Decimal? @db.Decimal(9, 6)
   checkOutLongitude Decimal? @db.Decimal(9, 6)
   checkOutAccuracyMeters Decimal? @db.Decimal(8, 2)
   checkOutDistanceMeters Decimal? @db.Decimal(10, 2)
   checkOutVerification VerificationStatus?
+  checkOutStatus AttendanceStatus?
   status AttendanceStatus @default(NOT_STARTED)
+  adjustedCheckInAt DateTime?
+  adjustedCheckOutAt DateTime?
+  adjustedStatus AttendanceStatus?
+  adjustedProjectId String?
   workDurationMinutes Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  adjustedProject Project? @relation("AdjustedAttendanceProject", fields: [adjustedProjectId], references: [id], onDelete: Restrict)
+  site Site @relation(fields: [siteId], references: [id], onDelete: Restrict)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   events AttendanceEvent[]
   corrections AttendanceCorrection[]
+  telegramDeliveries TelegramDelivery[]
+  dailySalesReport DailySalesReport?
+  visitLogs VisitLog[]
   @@unique([assignmentId, attendanceDate])
   @@index([organizationId, attendanceDate])
+  @@index([organizationId, attendanceDate, createdAt])
+  @@index([organizationId, attendanceDate, status])
+  @@index([organizationId, attendanceDate, adjustedStatus])
   @@index([organizationId, employeeId, checkOutAt, checkInAt])
+  @@index([organizationId, projectId, attendanceDate])
+  @@index([organizationId, adjustedProjectId, attendanceDate])
+}
+
+model TelegramDelivery {
+  id String @id @default(cuid())
+  organizationId String
+  attendanceRecordId String
+  kind TelegramDeliveryKind
+  chatId String
+  text String
+  storagePath String?
+  status TelegramDeliveryStatus @default(PENDING)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  telegramMessageId String?
+  lastError String?
+  createdAt DateTime @default(now())
+  sentAt DateTime?
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  attendanceRecord AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+
+  @@unique([attendanceRecordId, kind])
+  @@index([status, nextAttemptAt])
+  @@index([organizationId, status, nextAttemptAt, createdAt])
+  @@index([organizationId, createdAt])
 }
 
 model AttendanceEvent {
@@ -485,6 +716,116 @@ model AttendanceEvent {
   attendanceRecord AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   @@index([organizationId, occurredAt])
+}
+
+model VisitLog {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String
+  assignmentId String
+  siteId String
+  projectId String
+  attendanceRecordId String?
+  visitedAt DateTime @default(now())
+  latitude Decimal @db.Decimal(9, 6)
+  longitude Decimal @db.Decimal(9, 6)
+  accuracyMeters Decimal @db.Decimal(8, 2)
+  distanceMeters Decimal @db.Decimal(10, 2)
+  verification VerificationStatus
+  proofPhotoPath String
+  customerName String?
+  note String?
+  outletId String?
+  visitResult String?
+  followUpRequired Boolean @default(false)
+  followUpAt DateTime?
+  potentialOrderQuantity Int?
+  requestedDiscountPerItem Decimal? @db.Decimal(12, 2)
+  idempotencyKey String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  site Site @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  attendanceRecord AttendanceRecord? @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  outlet Outlet? @relation(fields: [outletId], references: [id], onDelete: SetNull)
+  reportVisits DailySalesReportVisit[]
+  @@unique([organizationId, employeeId, idempotencyKey])
+  @@index([organizationId, employeeId, visitedAt])
+  @@index([organizationId, siteId, visitedAt])
+  @@index([organizationId, projectId, visitedAt])
+  @@index([attendanceRecordId, visitedAt])
+  @@index([organizationId, outletId, visitedAt])
+}
+
+model Outlet {
+  id String @id @default(cuid())
+  organizationId String
+  projectId String
+  code String?
+  name String
+  contactName String?
+  phone String?
+  address String?
+  latitude Decimal? @db.Decimal(9, 6)
+  longitude Decimal? @db.Decimal(9, 6)
+  status LifecycleStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  visits VisitLog[]
+  @@unique([organizationId, projectId, name])
+  @@index([organizationId, projectId, status])
+}
+
+model DailySalesReport {
+  id String @id @default(cuid())
+  organizationId String
+  employeeId String
+  projectId String
+  attendanceRecordId String @unique
+  reportDate DateTime @db.Date
+  status String @default("DRAFT")
+  workerSummary String?
+  additionalNote String?
+  submittedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  attendanceRecord AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  visits DailySalesReportVisit[]
+  @@index([organizationId, reportDate, status])
+  @@index([organizationId, employeeId, reportDate])
+}
+
+model DailySalesReportVisit {
+  id String @id @default(cuid())
+  reportId String
+  visitLogId String
+  workerStatement String?
+  structuredContext Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  report DailySalesReport @relation(fields: [reportId], references: [id], onDelete: Restrict)
+  visitLog VisitLog @relation(fields: [visitLogId], references: [id], onDelete: Restrict)
+  @@unique([reportId, visitLogId])
+  @@index([reportId])
+}
+
+model TelegramConversationState {
+  id String @id @default(cuid())
+  organizationId String
+  telegramUserId String
+  state String
+  context Json
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  @@index([organizationId, state, expiresAt])
+  @@unique([organizationId, telegramUserId])
 }
 
 model AttendanceRequest {
@@ -510,10 +851,17 @@ model AttendanceCorrection {
   correctedCheckInAt DateTime?
   correctedCheckOutAt DateTime?
   correctedStatus AttendanceStatus?
+  originalCheckInAt DateTime?
+  originalCheckOutAt DateTime?
+  originalStatus AttendanceStatus?
+  originalProjectId String?
+  correctedProjectId String?
+  resolutionNote String?
   createdAt DateTime @default(now())
   resolvedAt DateTime?
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   attendanceRecord AttendanceRecord @relation(fields: [attendanceRecordId], references: [id], onDelete: Restrict)
+  correctedProject Project? @relation("CorrectionProject", fields: [correctedProjectId], references: [id], onDelete: Restrict)
   @@index([organizationId, status])
   @@index([attendanceRecordId])
 }
@@ -531,4 +879,11 @@ model AuditLog {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   @@index([organizationId, occurredAt])
   @@index([organizationId, targetType, targetId])
+}
+
+model TelegramUpdate {
+  id String @id @default(cuid())
+  updateId Int @unique
+  processedAt DateTime @default(now())
+  @@index([processedAt])
 }

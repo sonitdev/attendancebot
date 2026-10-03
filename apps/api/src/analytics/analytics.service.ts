@@ -8,6 +8,7 @@ import type {
   WeeklyPerformanceStats,
 } from '@workforce/contracts';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type { AdminDataScope } from '../auth/admin-scope.service.js';
 
 @Injectable()
 export class AnalyticsService {
@@ -26,8 +27,10 @@ export class AnalyticsService {
   async getEmployeeAnalytics(
     organizationId: string,
     employeeId: string,
+    scope?: AdminDataScope,
   ): Promise<EmployeePerformanceAnalytics> {
-    const cacheKey = `${organizationId}:${employeeId}`;
+    const scopeKey = !scope || scope.unrestricted ? 'all' : `${[...scope.projectIds].sort().join(',')}|${[...scope.siteIds].sort().join(',')}`;
+    const cacheKey = `${organizationId}:${employeeId}:${scopeKey}`;
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < this.TTL_MS) {
       return cached.data;
@@ -48,9 +51,13 @@ export class AnalyticsService {
           organizationId,
           employeeId,
           checkInAt: { not: null },
+          ...(!scope || scope.unrestricted ? {} : { OR: [{ projectId: { in: scope.projectIds } }, { adjustedProjectId: { in: scope.projectIds } }, { siteId: { in: scope.siteIds } }] }),
         },
         take: 100,
         include: {
+          project: true,
+          adjustedProject: true,
+          site: true,
           assignment: {
             include: {
               site: {
@@ -70,6 +77,7 @@ export class AnalyticsService {
               employeeId,
               organizationId,
               status: 'ACTIVE',
+              ...(!scope || scope.unrestricted ? {} : { site: { OR: [{ projectId: { in: scope.projectIds } }, { id: { in: scope.siteIds } }] } }),
             },
             include: {
               site: {
@@ -88,8 +96,11 @@ export class AnalyticsService {
     const totalWorkMinutes = records.reduce((acc, r) => acc + (r.workDurationMinutes ?? 0), 0);
     const totalWorkHours = Math.round((totalWorkMinutes / 60) * 10) / 10;
 
-    const onTimeCount = records.filter((r) => r.status !== 'LATE').length;
-    const lateCount = records.filter((r) => r.status === 'LATE').length;
+    const onTimeCount = records.filter((r) => {
+      const status = r.adjustedStatus ?? r.checkInStatus ?? r.status;
+      return status === 'ON_TIME';
+    }).length;
+    const lateCount = records.filter((r) => (r.adjustedStatus ?? r.checkInStatus ?? r.status) === 'LATE').length;
     const onTimePercentage = totalShifts > 0 ? Math.round((onTimeCount / totalShifts) * 100) : 100;
 
     const verifiedCount = records.filter((r) => r.checkInVerification === 'VERIFIED').length;
@@ -105,7 +116,7 @@ export class AnalyticsService {
     >();
 
     for (const record of records) {
-      const project = record.assignment?.site?.project;
+      const project = record.adjustedProject ?? record.project;
       if (!project) continue;
       if (!projectMap.has(project.id)) {
         projectMap.set(project.id, { project, records: [] });
@@ -116,7 +127,10 @@ export class AnalyticsService {
     const projectBreakdown: ProjectPerformanceSummary[] = Array.from(projectMap.values()).map(
       ({ project, records: pRecords }) => {
         const pMinutes = pRecords.reduce((acc, r) => acc + (r.workDurationMinutes ?? 0), 0);
-        const pOnTime = pRecords.filter((r) => r.status !== 'LATE').length;
+        const pOnTime = pRecords.filter((r) => {
+          const status = r.adjustedStatus ?? r.checkInStatus ?? r.status;
+          return status === 'ON_TIME';
+        }).length;
         const pTotal = pRecords.length;
 
         return {
@@ -135,11 +149,11 @@ export class AnalyticsService {
     const recentHistory: AttendanceHistoryItem[] = records.slice(0, 30).map((r) => ({
       id: r.id,
       attendanceDate: r.attendanceDate ? r.attendanceDate.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
-      projectName: r.assignment?.site?.project?.name ?? 'Site Project',
+      projectName: (r.adjustedProject ?? r.project)?.name ?? 'Site Project',
       siteName: r.assignment?.site?.name ?? 'Work Site',
-      checkInAt: r.checkInAt ? r.checkInAt.toISOString() : null,
-      checkOutAt: r.checkOutAt ? r.checkOutAt.toISOString() : null,
-      status: r.status,
+      checkInAt: (r.adjustedCheckInAt ?? r.checkInAt)?.toISOString() ?? null,
+      checkOutAt: (r.adjustedCheckOutAt ?? r.checkOutAt)?.toISOString() ?? null,
+      status: r.adjustedStatus ?? r.status,
       verification: r.checkInVerification,
       workDurationMinutes: r.workDurationMinutes,
     }));
@@ -192,9 +206,9 @@ export class AnalyticsService {
           dayNumber,
           hoursWorked: hours,
           targetHours: 8.0,
-          status: rec.status,
-          checkInAt: rec.checkInAt ? rec.checkInAt.toISOString() : null,
-          checkOutAt: rec.checkOutAt ? rec.checkOutAt.toISOString() : null,
+          status: rec.adjustedStatus ?? rec.status,
+          checkInAt: (rec.adjustedCheckInAt ?? rec.checkInAt)?.toISOString() ?? null,
+          checkOutAt: (rec.adjustedCheckOutAt ?? rec.checkOutAt)?.toISOString() ?? null,
           isToday,
         });
       } else {
@@ -262,22 +276,18 @@ export class AnalyticsService {
     organizationId: string,
     employeeId: string,
     limit = 50,
+    scope?: AdminDataScope,
   ): Promise<AttendanceHistoryItem[]> {
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
         organizationId,
         employeeId,
+        ...(!scope || scope.unrestricted ? {} : { OR: [{ projectId: { in: scope.projectIds } }, { adjustedProjectId: { in: scope.projectIds } }, { siteId: { in: scope.siteIds } }] }),
       },
       include: {
-        assignment: {
-          include: {
-            site: {
-              include: {
-                project: true,
-              },
-            },
-          },
-        },
+        project: true,
+        adjustedProject: true,
+        site: true,
       },
       orderBy: { attendanceDate: 'desc' },
       take: limit,
@@ -286,11 +296,11 @@ export class AnalyticsService {
     return records.map((r) => ({
       id: r.id,
       attendanceDate: r.attendanceDate ? r.attendanceDate.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
-      projectName: r.assignment?.site?.project?.name ?? 'Site Project',
-      siteName: r.assignment?.site?.name ?? 'Work Site',
-      checkInAt: r.checkInAt ? r.checkInAt.toISOString() : null,
-      checkOutAt: r.checkOutAt ? r.checkOutAt.toISOString() : null,
-      status: r.status,
+      projectName: (r.adjustedProject ?? r.project)?.name ?? r.site?.name ?? 'Site Project',
+      siteName: r.site?.name ?? 'Work Site',
+      checkInAt: (r.adjustedCheckInAt ?? r.checkInAt)?.toISOString() ?? null,
+      checkOutAt: (r.adjustedCheckOutAt ?? r.checkOutAt)?.toISOString() ?? null,
+      status: r.adjustedStatus ?? r.status,
       verification: r.checkInVerification,
       workDurationMinutes: r.workDurationMinutes,
     }));

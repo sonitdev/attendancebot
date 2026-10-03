@@ -1,16 +1,16 @@
 'use client';
 
-import React, { useEffect, useState, useTransition } from 'react';
-import { adminApi, getCachedApiData } from '@/lib/api';
+import React, { useState, useTransition } from 'react';
+import { adminApi } from '@/lib/api';
+import { km } from '@workforce/contracts';
+import { useLocale } from '@/lib/locale-context';
 import {
   Activity,
-  CheckCircle2,
   Clock,
   AlertTriangle,
   MapPin,
   RefreshCw,
   X,
-  UserCheck,
   Building,
   Shield,
   ExternalLink,
@@ -19,86 +19,21 @@ import {
   Layers,
   Users,
 } from 'lucide-react';
-import { KpiCard } from '@/components/ui/kpi-card';
 import { Modal } from '@/components/ui/modal';
-
-interface AttendanceRecordItem {
-  id: string;
-  employee: {
-    id: string;
-    employeeCode: string;
-    fullName: string;
-    avatarUrl: string | null;
-  };
-  site: {
-    id: string;
-    name: string;
-    timezone: string;
-    allowedRadiusMeters: number;
-    projectId?: string;
-    project?: {
-      id?: string;
-      name: string;
-      code: string;
-    };
-  };
-  schedule: {
-    name: string;
-    startTime: string;
-    endTime: string;
-  };
-  status: string;
-  checkInAt: string | null;
-  checkOutAt: string | null;
-  verificationResult: string | null;
-  workDurationMinutes: number | null;
-  distanceMeters: number | null;
-  eventsCount?: number;
-}
+import { useOperationsData, type AttendanceRecordItem } from './operations/use-operations-data';
+import { OperationsKpis } from './operations/operations-kpis';
 
 export default function OperationsPage() {
-  const [records, setRecords] = useState<AttendanceRecordItem[]>(() => getCachedApiData('/attendance/today') || []);
-  const [sites, setSites] = useState<any[]>(() => getCachedApiData('/sites') || []);
-  const [projects, setProjects] = useState<any[]>(() => getCachedApiData('/projects') || []);
-  const [workerGroups, setWorkerGroups] = useState<any[]>(() => getCachedApiData('/worker-groups') || []);
+  const { isKm } = useLocale();
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [selectedGroupId, setSelectedGroupId] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [detailRecord, setDetailRecord] = useState<any | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(() => !getCachedApiData('/attendance/today'));
   const [isDetailLoading, setIsDetailLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-
-  const loadData = async (showFullLoading = false) => {
-    if (showFullLoading) setIsLoading(true);
-    setError(null);
-    try {
-      const [attendanceData, sitesData, projectsData, groupsData] = await Promise.all([
-        adminApi.getTodayAttendance({
-          siteId: selectedSiteId || undefined,
-          projectId: selectedProjectId || undefined,
-        }, true),
-        adminApi.listSites(),
-        adminApi.listProjects(),
-        adminApi.listWorkerGroups().catch(() => []),
-      ]);
-      setRecords(attendanceData || []);
-      setSites(sitesData || []);
-      setProjects(projectsData || []);
-      setWorkerGroups(groupsData || []);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load attendance records');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData(records.length === 0);
-  }, [selectedProjectId, selectedSiteId]);
+  const { records, sites, projects, workerGroups, isLoading, error, setError, loadData } = useOperationsData(selectedProjectId, selectedSiteId);
 
   const handleOpenDetail = async (id: string) => {
     setSelectedRecordId(id);
@@ -176,7 +111,7 @@ export default function OperationsPage() {
   const filteredRecords = records.filter((r) => {
     // Project filter
     if (selectedProjectId) {
-      const pId = r.site?.project?.id || r.site?.projectId;
+      const pId = r.project?.id || r.site?.project?.id || r.site?.projectId;
       const matchesSiteInProject = visibleSites.some((s) => s.id === r.site?.id);
       if (pId && pId !== selectedProjectId && !matchesSiteInProject) return false;
       if (!pId && !matchesSiteInProject) return false;
@@ -218,65 +153,32 @@ export default function OperationsPage() {
       {/* Top Header & Compact Refresh Button */}
       <div className="flex items-start justify-between gap-3 pb-0.5">
         <div className="min-w-0">
-          <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-            <Activity className="w-5 h-5 text-[#023F26] shrink-0" />
-            <span className="truncate">Today's Site Operations</span>
+          <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-[var(--portal-primary)] shrink-0" />
+            <span className="truncate">{isKm ? 'ប្រតិបត្តិការវត្តមានថ្ងៃនេះ' : "Today's Site Operations"}</span>
           </h1>
           <p className="text-xs font-medium text-slate-500 mt-0.5">
-            Real-time authoritative attendance records for active physical job sites.
+            {isKm ? 'កំណត់ត្រាវត្តមានជាក់ស្តែងពីការដ្ឋានដែលបាន Check-in ក្នុងថ្ងៃនេះ' : 'Real-time authoritative attendance records for active physical job sites.'}
           </p>
         </div>
         <button
           onClick={() => loadData(true)}
           disabled={isLoading}
-          className="shrink-0 inline-flex items-center justify-center size-8 sm:size-auto sm:px-3.5 sm:py-2 rounded-xl bg-[#023F26] text-white text-xs font-bold hover:bg-[#012919] shadow-2xs transition-all active:scale-95 cursor-pointer"
+          className="shrink-0 inline-flex items-center justify-center size-8 sm:size-auto sm:px-3.5 sm:py-2 rounded-xl bg-[var(--portal-primary)] text-white text-xs font-bold hover:brightness-90 shadow-2xs transition-all active:scale-95 cursor-pointer"
           title="Refresh Live Data"
         >
-          <RefreshCw className={`w-3.5 h-3.5 text-[#c4d701] ${isLoading ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline ml-1.5">Refresh Live</span>
+          <RefreshCw className={`w-3.5 h-3.5 text-[var(--portal-accent)] ${isLoading ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline ml-1.5">{isKm ? 'ផ្ទុកឡើងវិញ' : 'Refresh Live'}</span>
         </button>
       </div>
 
-      {/* KPI Stat Cards (2-column on mobile, 4-column on desktop) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
-        <KpiCard
-          label="Total Checked In"
-          value={totalRecords}
-          tone="blue"
-          detail="Assigned workers today"
-          icon={UserCheck}
-        />
-        <KpiCard
-          label="Currently On Site"
-          value={presentCount}
-          tone="green"
-          detail="Open active shifts"
-          icon={Activity}
-          onClick={() => setSelectedStatus('PRESENT')}
-        />
-        <KpiCard
-          label="Completed Shifts"
-          value={completedCount}
-          tone="neutral"
-          detail="Checked out with duration"
-          icon={CheckCircle2}
-          onClick={() => setSelectedStatus('COMPLETED')}
-        />
-        <KpiCard
-          label="Exceptions / Flagged"
-          value={exceptionCount}
-          tone={exceptionCount > 0 ? 'warning' : 'neutral'}
-          detail="Late, Early, or Outside"
-          icon={AlertTriangle}
-          onClick={() => setSelectedStatus('EXCEPTIONS')}
-        />
-      </div>
+      <OperationsKpis isKm={isKm} total={totalRecords} present={presentCount} completed={completedCount} exceptions={exceptionCount} onStatus={setSelectedStatus} />
 
       {/* Multi-Project Category Tabs - Sleek Compact Apple Filter Pills */}
       <div className="space-y-1.5">
         <div className="flex items-center space-x-1.5 text-[11px] font-semibold text-slate-500 px-0.5">
           <FolderKanban className="size-3.5 text-slate-400 shrink-0" />
-          <span>Projects</span>
+          <span>{isKm ? 'គម្រោងការងារ' : 'Projects'}</span>
         </div>
 
         {/* Compact Horizontal Scrollable Pills */}
@@ -289,11 +191,11 @@ export default function OperationsPage() {
             }}
             className={`shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all active:scale-95 cursor-pointer ${
               !selectedProjectId
-                ? 'bg-[#023F26] text-white shadow-2xs'
+                ? 'bg-[var(--portal-primary)] text-white shadow-2xs'
                 : 'bg-slate-100 hover:bg-slate-200/70 text-slate-600 border border-slate-200/70'
             }`}
           >
-            <span>All Projects</span>
+            <span>{isKm ? 'គម្រោងទាំងអស់' : 'All Projects'}</span>
             <span
               className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${
                 !selectedProjectId ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-600'
@@ -307,6 +209,7 @@ export default function OperationsPage() {
             const isSelected = selectedProjectId === prj.id;
             const projectRecordsCount = records.filter(
               (r) =>
+                r.project?.id === prj.id ||
                 r.site?.project?.id === prj.id ||
                 r.site?.projectId === prj.id ||
                 sites.some((s) => s.projectId === prj.id && s.id === r.site?.id),
@@ -322,7 +225,7 @@ export default function OperationsPage() {
                 }}
                 className={`shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all active:scale-95 cursor-pointer ${
                   isSelected
-                    ? 'bg-[#023F26] text-white shadow-2xs'
+                    ? 'bg-[var(--portal-primary)] text-white shadow-2xs'
                     : 'bg-slate-100 hover:bg-slate-200/70 text-slate-600 border border-slate-200/70'
                 }`}
               >
@@ -345,13 +248,13 @@ export default function OperationsPage() {
         {/* Building / Site Filter */}
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1.5">
-            <Building className="w-3.5 h-3.5 text-[#023F26]" />
+            <Building className="w-3.5 h-3.5 text-[var(--portal-primary)]" />
             <span>Building / Site Zone</span>
           </label>
           <select
             value={selectedSiteId}
             onChange={(e) => setSelectedSiteId(e.target.value)}
-            className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#023F26]"
+            className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[var(--portal-primary)]"
           >
             <option value="">
               {selectedProjectId ? 'All Buildings in this Project' : 'All Buildings & Sites'}
@@ -367,13 +270,13 @@ export default function OperationsPage() {
         {/* Workforce Group Filter */}
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-[#023F26]" />
+            <Layers className="w-3.5 h-3.5 text-[var(--portal-primary)]" />
             <span>Workforce Group / Trade</span>
           </label>
           <select
             value={selectedGroupId}
             onChange={(e) => setSelectedGroupId(e.target.value)}
-            className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#023F26]"
+            className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[var(--portal-primary)]"
           >
             <option value="">All Workforce Groups</option>
             {workerGroups.map((grp) => (
@@ -387,13 +290,13 @@ export default function OperationsPage() {
         {/* Status Filter */}
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-[#023F26]" />
+            <Clock className="w-3.5 h-3.5 text-[var(--portal-primary)]" />
             <span>Attendance Status</span>
           </label>
           <select
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
-            className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#023F26]"
+            className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[var(--portal-primary)]"
           >
             <option value="">All Statuses</option>
             <option value="PRESENT">Currently On Site</option>
@@ -410,7 +313,7 @@ export default function OperationsPage() {
       <div className="md:hidden space-y-2.5">
         {isLoading ? (
           <div className="py-12 text-center text-slate-400 text-xs bg-white rounded-2xl border border-slate-200">
-            <div className="w-6 h-6 border-2 border-[#023F26] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            <div className="w-6 h-6 border-2 border-[var(--portal-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             Loading attendance records...
           </div>
         ) : filteredRecords.length === 0 ? (
@@ -441,7 +344,7 @@ export default function OperationsPage() {
                         className="size-full object-cover"
                       />
                     ) : (
-                      <span className="text-base font-extrabold text-[#023F26]">
+                      <span className="text-base font-extrabold text-[var(--portal-primary)]">
                         {r.employee.fullName.slice(0, 2).toUpperCase()}
                       </span>
                     )}
@@ -455,21 +358,29 @@ export default function OperationsPage() {
                       </span>
                       <span
                         className={`px-3 py-0.5 rounded-full text-xs font-bold shrink-0 ${
-                          isLate
+                          isOutside
+                            ? 'bg-rose-100 text-rose-800'
+                            : isLate
                             ? 'bg-[#962d00] text-white'
                             : isOnTime
-                            ? 'bg-[#023F26] text-white'
+                            ? 'bg-[var(--portal-primary)] text-white'
                             : r.status === 'PRESENT'
                             ? 'bg-emerald-100 text-emerald-800'
                             : 'bg-slate-100 text-slate-800'
                         }`}
                       >
-                        {isLate ? 'Late' : r.status.replace('_', ' ')}
+                        {isOutside
+                          ? (isKm ? 'ខាងក្រៅការដ្ឋាន' : 'Outside Site')
+                          : isLate
+                          ? (isKm ? 'ចូលយឺត' : 'Late')
+                          : isOnTime
+                          ? (isKm ? 'ចូលទាន់ពេល' : 'On-Time')
+                          : r.status.replace('_', ' ')}
                       </span>
                     </div>
 
                     {/* Bold Worker Full Name */}
-                    <h3 className="text-base font-extrabold text-slate-900 tracking-tight leading-tight mt-0.5">
+                    <h3 className="text-base font-extrabold text-slate-900 leading-tight mt-0.5">
                       {r.employee.fullName}
                     </h3>
 
@@ -483,27 +394,27 @@ export default function OperationsPage() {
                 {/* Bottom row stats: Checkin & Checkout matching mockup */}
                 <div className="pt-2.5 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
                   <div>
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-1">
+                    <span className="text-[10px] font-extrabold uppercase text-slate-400 block mb-1">
                       Checkin
                     </span>
                     <div
                       className={`inline-block font-mono font-bold px-3 py-1 rounded-full text-xs ${
                         isLate
                           ? 'bg-[#962d00] text-white'
-                          : 'bg-[#023F26] text-white'
+                          : 'bg-[var(--portal-primary)] text-white'
                       }`}
                     >
                       {formatTime(r.checkInAt, r.site?.timezone)}
                     </div>
                   </div>
                   <div>
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-1">
+                    <span className="text-[10px] font-extrabold uppercase text-slate-400 block mb-1">
                       Checkout
                     </span>
                     <div
                       className={`inline-block font-mono font-bold px-3 py-1 rounded-full text-xs ${
                         r.checkOutAt
-                          ? 'bg-[#023F26] text-white'
+                          ? 'bg-[var(--portal-primary)] text-white'
                           : 'bg-slate-100 text-slate-500'
                       }`}
                     >
@@ -517,11 +428,11 @@ export default function OperationsPage() {
         )}
       </div>
 
-      {/* Desktop Main Table (hidden md:block) */}
-      <div className="hidden md:block bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+      {/* Desktop attendance list: keep identity, location and decision data together. */}
+      <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         {isLoading ? (
           <div className="py-12 text-center text-slate-400 text-xs">
-            <div className="w-6 h-6 border-2 border-[#023F26] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            <div className="w-6 h-6 border-2 border-[var(--portal-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             Loading attendance records...
           </div>
         ) : filteredRecords.length === 0 ? (
@@ -530,18 +441,15 @@ export default function OperationsPage() {
             No attendance records match the selected filters today.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs divide-y divide-slate-200">
-              <thead className="bg-slate-50 text-slate-600 font-semibold uppercase tracking-wider text-[10px]">
+          <div>
+            <table className="w-full table-fixed text-left text-xs">
+              <thead className="border-b border-slate-200 bg-slate-50/80 text-[10px] font-bold uppercase text-slate-500">
                 <tr>
-                  <th className="py-3 px-4">Employee</th>
-                  <th className="py-3 px-4">Site / Project</th>
-                  <th className="py-3 px-4">Shift Schedule</th>
-                  <th className="py-3 px-4">Arrival</th>
-                  <th className="py-3 px-4">Departure</th>
-                  <th className="py-3 px-4">Verification</th>
-                  <th className="py-3 px-4">Duration</th>
-                  <th className="py-3 px-4 text-right">Details</th>
+                  <th className="w-[38%] px-5 py-3.5">{km.operations.employeeAndSite}</th>
+                  <th className="w-[15%] px-4 py-3.5">{km.operations.checkIn}</th>
+                  <th className="w-[15%] px-4 py-3.5">{km.operations.checkOut}</th>
+                  <th className="w-[18%] px-4 py-3.5">{km.operations.status}</th>
+                  <th className="w-[14%] px-5 py-3.5 text-right">{km.operations.details}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -554,13 +462,12 @@ export default function OperationsPage() {
                   return (
                     <tr
                       key={r.id}
-                      className="hover:bg-slate-50/80 transition-colors cursor-pointer"
+                      className="cursor-pointer transition-colors hover:bg-emerald-50/35"
                       onClick={() => handleOpenDetail(r.id)}
                     >
-                      {/* Employee */}
-                      <td className="py-3 px-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 rounded-full bg-slate-200 overflow-hidden flex items-center justify-center shrink-0 text-slate-600 font-medium">
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-emerald-50 text-xs font-bold text-[var(--portal-primary)]">
                             {r.employee.avatarUrl ? (
                               <img
                                 src={r.employee.avatarUrl}
@@ -571,96 +478,48 @@ export default function OperationsPage() {
                               <span>{r.employee.fullName.slice(0, 2).toUpperCase()}</span>
                             )}
                           </div>
-                          <div>
-                            <div className="font-semibold text-slate-900">{r.employee.fullName}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">
-                              {r.employee.employeeCode}
-                            </div>
+                          <div className="min-w-0">
+                            <div className="truncate font-bold text-slate-900">{r.employee.fullName}</div>
+                            <div className="mt-0.5 truncate text-[11px] text-slate-500">{r.site.name} <span className="text-slate-300">·</span> {r.site.project?.name || 'Project'}</div>
                           </div>
                         </div>
                       </td>
-
-                      {/* Site / Project */}
-                      <td className="py-3 px-4">
-                        <div className="font-medium text-slate-800">{r.site.name}</div>
-                        <div className="text-[10px] text-slate-400">
-                          {r.site.project?.code || 'PRJ'} • {r.site.project?.name || ''}
-                        </div>
-                      </td>
-
-                      {/* Shift Schedule */}
-                      <td className="py-3 px-4 font-mono text-[11px] text-slate-600">
-                        {r.schedule.startTime} – {r.schedule.endTime}
-                      </td>
-
-                      {/* Arrival */}
-                      <td className="py-3 px-4">
-                        <div className="font-mono font-medium text-slate-900">
+                      <td className="px-4 py-4">
+                        <div className="font-mono text-sm font-semibold text-slate-900">
                           {formatTime(r.checkInAt, r.site.timezone)}
                         </div>
-                        <div className="mt-0.5">
-                          {isLate ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#a16207] text-white badge-white-border">
-                              Late
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#023F26] text-white badge-white-border">
-                              On time
-                            </span>
-                          )}
-                        </div>
                       </td>
-
-                      {/* Departure */}
-                      <td className="py-3 px-4">
-                        <div className="font-medium text-slate-900">
+                      <td className="px-4 py-4">
+                        <div className="font-mono text-sm font-semibold text-slate-900">
                           {r.checkOutAt ? formatTime(r.checkOutAt, r.site.timezone) : '—'}
                         </div>
-                        <div className="mt-0.5">
-                          {r.status === 'COMPLETED' && (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#023F26] text-white badge-white-border">
-                              Completed
-                            </span>
-                          )}
-                        </div>
                       </td>
-
-                      {/* Verification */}
-                      <td className="py-3 px-4">
+                      <td className="px-4 py-4">
                         {isOutside ? (
-                          <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#9f1239] text-white badge-white-border">
+                          <span className="inline-flex items-center space-x-1 rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700">
                             <AlertTriangle className="w-3 h-3 shrink-0" />
-                            <span>Outside Geofence</span>
+                            <span>{isKm ? 'ខាងក្រៅការដ្ឋាន' : 'Outside Site'}</span>
                           </span>
                         ) : isVerified ? (
-                          <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#047857] text-white badge-white-border">
-                            <Shield className="w-3 h-3 shrink-0 text-[#c4d701]" />
-                            <span>Verified</span>
+                          <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${isLate ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                            {isLate ? (isKm ? 'ចូលយឺត (Late)' : 'Late') : r.checkOutAt ? (isKm ? 'បានបញ្ចប់' : 'Completed') : (isKm ? 'ចូលទាន់ពេល' : 'On-Time')}
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-700 text-white badge-white-border">
-                            Standard
+                            {isKm ? 'ធម្មតា' : 'Standard'}
                           </span>
                         )}
                       </td>
 
-                      {/* Duration */}
-                      <td className="py-3 px-4 font-mono text-[11px] text-slate-700">
-                        {r.workDurationMinutes != null
-                          ? `${Math.floor(r.workDurationMinutes / 60)}h ${r.workDurationMinutes % 60}m`
-                          : '—'}
-                      </td>
-
-                      {/* Detail CTA */}
-                      <td className="py-3 px-4 text-right">
+                      <td className="px-5 py-4 text-right">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             handleOpenDetail(r.id);
                           }}
-                          className="text-[#023F26] hover:underline font-bold text-[11px] inline-flex items-center space-x-1 cursor-pointer"
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--portal-primary)] hover:underline"
                         >
-                          <span>Timeline</span>
+                          <span>{isKm ? 'មើលលម្អិត' : 'Timeline'}</span>
                           <ExternalLink className="w-3 h-3" />
                         </button>
                       </td>
@@ -679,8 +538,8 @@ export default function OperationsPage() {
         onClose={handleCloseDetail}
         title={
           <div className="flex items-center space-x-2">
-            <Shield className="size-4 text-[#023F26] shrink-0" />
-            <span>Attendance Evidence & Timeline</span>
+            <Shield className="size-4 text-[var(--portal-primary)] shrink-0" />
+            <span>{isKm ? 'ភស្តុតាងវត្តមាន & កាលប្បវត្តិផ្លូវការ' : 'Attendance Evidence & Timeline'}</span>
           </div>
         }
         subtitle={selectedRecordId ? `ID: ${selectedRecordId}` : undefined}
@@ -689,29 +548,65 @@ export default function OperationsPage() {
         <div className="space-y-4 text-xs">
           {isDetailLoading || !detailRecord ? (
             <div className="py-12 text-center text-slate-400">
-              <div className="w-6 h-6 border-2 border-[#023F26] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-              Retrieving immutable audit events...
+              <div className="w-6 h-6 border-2 border-[var(--portal-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              {isKm ? 'កំពុងទាញយកទិន្នន័យភស្តុតាង...' : 'Retrieving immutable audit events...'}
             </div>
           ) : (
             <>
               {/* Worker & Site Card */}
               <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-200/70">
                 <div>
-                  <div className="text-[10px] text-slate-400 font-mono uppercase">Worker</div>
+                  <div className="text-[10px] text-slate-400 font-mono uppercase">{isKm ? 'បុគ្គលិក' : 'Worker'}</div>
                   <div className="font-bold text-slate-900 text-xs mt-0.5 truncate">
                     {detailRecord.employee?.fullName}
                   </div>
                   <div className="text-slate-500 font-mono text-[10px] truncate">
-                    Code: {detailRecord.employee?.employeeCode}
+                    {isKm ? 'លេខកូដ:' : 'Code:'} {detailRecord.employee?.employeeCode}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-slate-400 font-mono uppercase">Physical Site</div>
+                  <div className="text-[10px] text-slate-400 font-mono uppercase">{isKm ? 'ការដ្ឋាន' : 'Physical Site'}</div>
                   <div className="font-bold text-slate-900 text-xs mt-0.5 truncate">
                     {detailRecord.site?.name}
                   </div>
                   <div className="text-slate-500 text-[10px] truncate">
-                    Radius: {detailRecord.site?.allowedRadiusMeters}m
+                    {isKm ? 'ទីតាំងកំណត់:' : 'Radius:'} {detailRecord.site?.allowedRadiusMeters}m
+                  </div>
+                </div>
+              </div>
+
+              {/* Status & Verification Highlight */}
+              <div className="grid grid-cols-2 gap-3 p-3 rounded-2xl border border-slate-200/80 bg-slate-50/70">
+                <div>
+                  <div className="text-[10px] text-slate-400 font-mono uppercase">{isKm ? 'ស្ថានភាពវត្តមាន' : 'Attendance Status'}</div>
+                  <div className="mt-1">
+                    {detailRecord.status === 'LATE' || detailRecord.events?.some((e: any) => e.eventType === 'CHECK_IN_LATE') ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-bold text-amber-700">
+                        <span>⚠️</span> {isKm ? 'ចូលយឺត (Late)' : 'Late Arrival'}
+                      </span>
+                    ) : detailRecord.status === 'OUTSIDE_GEOFENCE' ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-bold text-rose-700">
+                        <span>⚠️</span> {isKm ? 'ខាងក្រៅការដ្ឋាន' : 'Outside Site'}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                        <span>✅</span> {isKm ? 'ចូលទាន់ពេល (On Time)' : 'On-Time Arrival'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-400 font-mono uppercase">{isKm ? 'ការផ្ទៀងផ្ទាត់ទីតាំង' : 'Location Verification'}</div>
+                  <div className="mt-1">
+                    {detailRecord.verification === 'OUTSIDE_GEOFENCE' || (detailRecord.distanceMeters != null && detailRecord.site?.allowedRadiusMeters != null && detailRecord.distanceMeters > detailRecord.site.allowedRadiusMeters) ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-bold text-rose-700">
+                        <span>⚠️</span> {isKm ? 'ខាងក្រៅការដ្ឋាន' : 'Outside Site'}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                        <span>📍</span> {isKm ? 'ក្នុងបរិវេណការដ្ឋាន' : 'Inside Verified Site'}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -719,11 +614,11 @@ export default function OperationsPage() {
               {/* Evidence Specs */}
               <div className="space-y-2">
                 <div className="text-xs font-semibold text-slate-800">
-                  Authoritative Evidence Log
+                  {isKm ? 'កំណត់ត្រាភស្តុតាងផ្លូវការ' : 'Authoritative Evidence Log'}
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="p-2.5 bg-slate-50/80 rounded-xl border border-slate-200/70">
-                    <div className="text-[9px] text-slate-400 uppercase font-semibold">Distance</div>
+                    <div className="text-[9px] text-slate-400 uppercase font-semibold">{isKm ? 'ចម្ងាយ' : 'Distance'}</div>
                     <div className="text-xs font-bold font-mono text-slate-800 mt-0.5">
                       {detailRecord.distanceMeters != null
                         ? `${Math.round(detailRecord.distanceMeters)}m`
@@ -731,28 +626,54 @@ export default function OperationsPage() {
                     </div>
                   </div>
                   <div className="p-2.5 bg-slate-50/80 rounded-xl border border-slate-200/70">
-                    <div className="text-[9px] text-slate-400 uppercase font-semibold">Arrival</div>
+                    <div className="text-[9px] text-slate-400 uppercase font-semibold">{isKm ? 'ម៉ោងចូល' : 'Arrival'}</div>
                     <div className="text-xs font-bold font-mono text-slate-800 mt-0.5 truncate">
                       {formatTime(detailRecord.checkInAt, detailRecord.site?.timezone)}
                     </div>
                   </div>
                   <div className="p-2.5 bg-slate-50/80 rounded-xl border border-slate-200/70">
-                    <div className="text-[9px] text-slate-400 uppercase font-semibold">Duration</div>
+                    <div className="text-[9px] text-slate-400 uppercase font-semibold">{isKm ? 'រយៈពេល' : 'Duration'}</div>
                     <div className="text-xs font-bold font-mono text-slate-800 mt-0.5 truncate">
                       {detailRecord.workDurationMinutes != null
                         ? `${detailRecord.workDurationMinutes}m`
-                        : 'Active'}
+                        : (isKm ? 'កំពុងដំណើរការ' : 'Active')}
                     </div>
                   </div>
                 </div>
               </div>
 
+              {/* Proof Photo Evidence */}
+              {detailRecord.checkInPhotoUrl && (
+                <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                    <span className="flex items-center gap-1.5">
+                      <span>📸</span> {isKm ? 'រូបភាពភស្តុតាងវត្តមាន (ផ្ទាល់ពីកាមេរ៉ា)' : 'Proof Photo Evidence (Live Camera)'}
+                    </span>
+                    <a
+                      href={detailRecord.checkInPhotoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1"
+                    >
+                      {isKm ? 'បើកមើលរូបពេញ ↗' : 'View Full Image ↗'}
+                    </a>
+                  </div>
+                  <div className="relative aspect-[4/3] w-full max-h-60 overflow-hidden rounded-xl bg-slate-900 border border-slate-200 shadow-inner">
+                    <img
+                      src={detailRecord.checkInPhotoUrl}
+                      alt="Attendance Proof"
+                      className="size-full object-cover"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Immutable Event Timeline */}
               <div className="space-y-3">
                 <div className="text-xs font-semibold text-slate-800 flex items-center justify-between">
-                  <span>Immutable Event Timeline</span>
+                  <span>{isKm ? 'ប្រវត្តិកំណត់ត្រាព្រឹត្តិការណ៍' : 'Immutable Event Timeline'}</span>
                   <span className="text-[10px] font-mono text-slate-400">
-                    {detailRecord.events?.length || 0} events
+                    {detailRecord.events?.length || 0} {isKm ? 'ព្រឹត្តិការណ៍' : 'events'}
                   </span>
                 </div>
 
@@ -760,8 +681,8 @@ export default function OperationsPage() {
                   {detailRecord.events?.map((ev: any, idx: number) => (
                     <div key={ev.id || idx} className="relative pl-5">
                       {/* Dot */}
-                      <div className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-white border-2 border-[#023F26] flex items-center justify-center">
-                        <div className="w-1 h-1 bg-[#023F26] rounded-full" />
+                      <div className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-white border-2 border-[var(--portal-primary)] flex items-center justify-center">
+                        <div className="w-1 h-1 bg-[var(--portal-primary)] rounded-full" />
                       </div>
                       <div>
                         <div className="flex items-center space-x-2">
@@ -792,9 +713,9 @@ export default function OperationsPage() {
                 <button
                   type="button"
                   onClick={handleCloseDetail}
-                  className="px-5 py-2.5 rounded-xl bg-[#023F26] hover:bg-[#012919] text-xs font-bold text-white shadow-2xs transition-all active:scale-95 cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl bg-[var(--portal-primary)] hover:brightness-90 text-xs font-bold text-white shadow-2xs transition-all active:scale-95 cursor-pointer"
                 >
-                  Close Timeline
+                  {isKm ? 'បិទផ្ទាំង' : 'Close Timeline'}
                 </button>
               </div>
             </>

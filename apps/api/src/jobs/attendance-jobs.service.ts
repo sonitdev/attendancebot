@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { km } from '@workforce/contracts';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TelegramNotifierService } from './telegram-notifier.service.js';
 import {
@@ -83,11 +84,19 @@ export class AttendanceJobsService {
         (currentDateStr === recordDateStr && currentMinutes > endMinutes + grace);
 
       if (isShiftEnded) {
-        await this.prisma.$transaction(async (tx) => {
-          await tx.attendanceRecord.update({
-            where: { id: record.id },
-            data: { status: 'MISSING_CHECKOUT' },
+        const claimed = await this.prisma.$transaction(async (tx) => {
+          // Multiple job runners may evaluate the same record concurrently.
+          // Only the runner that wins this conditional transition may notify.
+          const transition = await tx.attendanceRecord.updateMany({
+            where: {
+              id: record.id,
+              checkInAt: { not: null },
+              checkOutAt: null,
+              status: { in: ['ON_TIME', 'LATE'] },
+            },
+            data: { checkOutStatus: 'MISSING_CHECKOUT', status: 'MISSING_CHECKOUT' },
           });
+          if (transition.count !== 1) return false;
 
           await tx.attendanceEvent.create({
             data: {
@@ -114,7 +123,11 @@ export class AttendanceJobsService {
               },
             },
           });
+
+          return true;
         });
+
+        if (!claimed) continue;
 
         flaggedCount++;
 
@@ -122,7 +135,7 @@ export class AttendanceJobsService {
         if (record.employee.telegramAccount?.telegramUserId) {
           await this.telegramNotifier.sendMessage(
             record.employee.telegramAccount.telegramUserId,
-            `⚠️ *Shift Checkout Notice*\nYour shift at *${record.assignment.site.name}* ended at ${record.assignment.schedule.endTime}, but no check-out was recorded. Please inform your site manager.`,
+            km.telegram.missingCheckoutNotice(record.assignment.site.name, record.assignment.schedule.endTime),
           );
         }
       }
@@ -197,7 +210,10 @@ export class AttendanceJobsService {
                 organizationId: assignment.organizationId,
                 employeeId: assignment.employeeId,
                 assignmentId: assignment.id,
+                projectId: assignment.site.projectId,
+                siteId: assignment.siteId,
                 attendanceDate: currentDate,
+                checkInStatus: 'ABSENT',
                 status: 'ABSENT',
               },
             });
@@ -291,7 +307,7 @@ export class AttendanceJobsService {
         if (tgUserId) {
           const res = await this.telegramNotifier.sendMessage(
             tgUserId,
-            `🔔 *Upcoming Shift Reminder*\nYour shift at *${assignment.site.name}* begins at *${assignment.schedule.startTime}*. Please remember to open your Mini App to check in upon arrival at the site.`,
+            km.telegram.shiftReminder(assignment.site.name, assignment.schedule.startTime),
           );
           if (res.success) {
             remindersSent++;
@@ -352,25 +368,28 @@ export class AttendanceJobsService {
     let totalPresent = 0;
 
     for (const record of attendanceRecords) {
-      if (record.checkInAt) {
+      const effectiveCheckIn = record.adjustedCheckInAt ?? record.checkInAt;
+      const effectiveStatus = record.adjustedStatus ?? record.status;
+      const arrivalStatus = record.adjustedStatus ?? record.checkInStatus ?? record.status;
+      if (effectiveCheckIn) {
         totalPresent++;
       }
-      if (record.status === 'ON_TIME' || (record.checkInAt && record.status === 'COMPLETED')) {
+      if (arrivalStatus === 'ON_TIME') {
         onTimeCount++;
       }
-      if (record.status === 'LATE') {
+      if (arrivalStatus === 'LATE') {
         lateCount++;
       }
-      if (record.status === 'COMPLETED') {
+      if (effectiveStatus === 'COMPLETED') {
         completedCount++;
       }
-      if (record.status === 'EARLY_CHECKOUT') {
+      if (effectiveStatus === 'EARLY_CHECKOUT') {
         earlyCheckoutCount++;
       }
-      if (record.status === 'MISSING_CHECKOUT') {
+      if (effectiveStatus === 'MISSING_CHECKOUT') {
         missingCheckoutCount++;
       }
-      if (record.status === 'ABSENT') {
+      if (effectiveStatus === 'ABSENT') {
         absentCount++;
       }
     }
@@ -380,15 +399,19 @@ export class AttendanceJobsService {
 
     const sitesBreakdown = sites.map((site) => {
       const siteAssignments = assignments.filter((a) => a.siteId === site.id);
-      const siteRecords = attendanceRecords.filter((r) => r.assignment.siteId === site.id);
+      const siteRecords = attendanceRecords.filter((r) => r.siteId === site.id);
 
-      const sitePresent = siteRecords.filter((r) => r.checkInAt).length;
+      const sitePresent = siteRecords.filter((r) => r.adjustedCheckInAt ?? r.checkInAt).length;
       const siteOnTime = siteRecords.filter(
-        (r) => r.status === 'ON_TIME' || (r.checkInAt && r.status === 'COMPLETED'),
+        (r) => {
+          const status = r.adjustedStatus ?? r.checkInStatus ?? r.status;
+          const checkInAt = r.adjustedCheckInAt ?? r.checkInAt;
+          return Boolean(checkInAt && status === 'ON_TIME');
+        },
       ).length;
-      const siteLate = siteRecords.filter((r) => r.status === 'LATE').length;
+      const siteLate = siteRecords.filter((r) => (r.adjustedStatus ?? r.checkInStatus ?? r.status) === 'LATE').length;
       const siteMissingCheckout = siteRecords.filter(
-        (r) => r.status === 'MISSING_CHECKOUT',
+        (r) => (r.adjustedStatus ?? r.status) === 'MISSING_CHECKOUT',
       ).length;
 
       return {

@@ -3,26 +3,73 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #18181b;
+  --background: #f4f5f1;
+  --foreground: #17352b;
+  --ink: #17352b;
+  --forest: #063f2b;
+  --lime: #d9e86c;
+  --paper: #fbfcf8;
+}
+
+@font-face {
+  font-family: 'Kantumruy Pro';
+  src: url('/fonts/KantumruyPro-Variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Roboto Flex';
+  src: url('/fonts/RobotoFlex-Variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
 }
 
 body {
   color: var(--tg-theme-text-color, var(--foreground));
-  background: var(--tg-theme-secondary-bg-color, #f4f4f5);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: var(--tg-theme-secondary-bg-color, var(--background));
+  font-family: 'Kantumruy Pro', sans-serif;
+  letter-spacing: -0.012em;
+  font-size: 16px;
+  font-weight: 500;
+  font-variation-settings: "wght" 500;
+  line-height: 1.65;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+}
+
+html[lang='km'] body {
+  font-size: 16px;
+  font-weight: 500;
+  font-variation-settings: "wght" 500;
+  line-height: 1.72;
+}
+
+html[lang='en'] body {
+  font-family: 'Roboto Flex', 'Kantumruy Pro', sans-serif;
+  font-size: 16px;
+  font-weight: 500;
+  font-variation-settings: "wght" 500;
+  line-height: 1.6;
+}
+
+html[lang='km'] button,
+html[lang='km'] input,
+html[lang='km'] select,
+html[lang='km'] textarea {
+  font-weight: 500;
 }
 
 .mini-stage {
   position: relative;
   overflow-x: hidden;
   background:
-    radial-gradient(520px 360px at 100% -8%, rgb(16 185 129 / 17%), transparent 58%),
-    radial-gradient(420px 300px at -6% 102%, rgb(59 130 246 / 10%), transparent 62%),
-    var(--tg-theme-secondary-bg-color, #f4f7f5);
+    radial-gradient(560px 360px at 110% -8%, rgb(217 232 108 / 26%), transparent 60%),
+    radial-gradient(480px 420px at -18% 100%, rgb(6 63 43 / 10%), transparent 62%),
+    var(--tg-theme-secondary-bg-color, var(--background));
 }
 
 .mini-stage__signal {
@@ -31,9 +78,9 @@ body {
   height: 12rem;
   right: -4rem;
   top: 3rem;
-  border: 1px solid rgb(16 185 129 / 22%);
+  border: 1px solid rgb(6 63 43 / 12%);
   border-radius: 999px;
-  box-shadow: 0 0 0 26px rgb(16 185 129 / 4%), 0 0 0 55px rgb(16 185 129 / 2%);
+  box-shadow: 0 0 0 26px rgb(6 63 43 / 4%), 0 0 0 55px rgb(6 63 43 / 2%);
   pointer-events: none;
   animation: mini-signal 5s ease-in-out infinite;
 }
@@ -50,7 +97,26 @@ body {
 .motion-stage button:active { transform: scale(.975); }
 
 .motion-stage > * {
-  box-shadow: 0 1px 0 rgb(255 255 255 / 85%) inset;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 90%) inset;
+}
+
+.premium-card {
+  border: 1px solid rgb(6 63 43 / 10%);
+  background: rgb(251 252 248 / 92%);
+  box-shadow: 0 18px 42px rgb(6 63 43 / 7%), 0 2px 5px rgb(6 63 43 / 4%);
+  backdrop-filter: blur(12px);
+}
+
+.premium-kicker {
+  color: #6b7e45;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+
+.data-font {
+  font-family: 'Roboto Flex', 'Kantumruy Pro', sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (prefers-reduced-motion: reduce) {

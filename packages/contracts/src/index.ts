@@ -50,6 +50,17 @@ export const attendanceCheckInSchema = attendanceLocationSchema.extend({
 }).strict();
 
 export type AttendanceCheckInInput = z.infer<typeof attendanceCheckInSchema>;
+export const recordVisitSchema = attendanceCheckInSchema.extend({
+  outletId: z.string().min(1).optional(),
+  customerName: z.string().trim().min(1).max(120).optional(),
+  note: z.string().trim().min(1).max(500).optional(),
+  visitResult: z.string().trim().min(1).max(500).optional(),
+  followUpRequired: z.boolean().optional(),
+  followUpAt: z.string().datetime({ offset: true }).optional(),
+  potentialOrderQuantity: z.number().int().positive().max(1_000_000).optional(),
+  requestedDiscountPerItem: z.number().nonnegative().max(1_000_000).optional(),
+}).strict();
+export type RecordVisitInput = z.infer<typeof recordVisitSchema>;
 
 // Telegram Session
 export const telegramSessionSchema = z.object({
@@ -95,6 +106,7 @@ export const createEmployeeSchema = z.object({
 export const createProjectSchema = z.object({
   code: z.string().min(1).max(50),
   name: z.string().min(1).max(100),
+  workMode: z.enum(['SITE', 'SALES']).default('SITE'),
 }).strict();
 
 export const createSiteSchema = z.object({
@@ -141,7 +153,8 @@ export type LinkTelegramInput = z.infer<typeof linkTelegramSchema>;
 export const updateProjectSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   code: z.string().min(1).max(50).optional(),
-  status: z.enum(['DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED']).optional(),
+  status: z.enum(['DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED', 'ARCHIVED']).optional(),
+  workMode: z.enum(['SITE', 'SALES']).optional(),
 }).strict();
 
 export const updateSiteSchema = z.object({
@@ -182,10 +195,36 @@ export type UpdateEmployeeInput = z.infer<typeof updateEmployeeSchema>;
 export type UpdateWorkScheduleInput = z.infer<typeof updateWorkScheduleSchema>;
 export type UpdateAssignmentInput = z.infer<typeof updateAssignmentSchema>;
 
+export const updateOrganizationSettingsSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  logoUrl: z.string().url().max(1_000).nullable().optional(),
+  brandPrimaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  brandAccentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  defaultLocale: z.enum(['en', 'km']).optional(),
+}).strict();
+
+export const uploadOrganizationLogoSchema = z.object({
+  imageDataUrl: z.string().regex(/^data:image\/(png|jpeg|webp|svg\+xml);base64,/).max(4_000_000),
+}).strict();
+
+export type UpdateOrganizationSettingsInput = z.infer<typeof updateOrganizationSettingsSchema>;
+
+export const replaceAdminScopesSchema = z.object({
+  projectIds: z.array(z.string().min(1)).max(500),
+  siteIds: z.array(z.string().min(1)).max(500),
+}).strict();
+
+export type ReplaceAdminScopesInput = z.infer<typeof replaceAdminScopesSchema>;
+
 // Worker Today Response
 export const workerTodayResponseSchema = z.object({
   date: z.string(),
   siteTimezone: z.string(),
+  currentProject: z.object({
+    id: z.string(),
+    name: z.string(),
+    workMode: z.enum(['SITE', 'SALES']),
+  }),
   assignment: z.object({
     id: z.string(),
     startsOn: z.string(),
@@ -219,6 +258,79 @@ export const workerTodayResponseSchema = z.object({
 }).strict();
 
 export type WorkerTodayResponse = z.infer<typeof workerTodayResponseSchema>;
+
+export const setCurrentProjectSchema = z.object({ projectId: z.string().min(1) }).strict();
+export type SetCurrentProjectInput = z.infer<typeof setCurrentProjectSchema>;
+export interface WorkerConnectedProject { id: string; name: string; workMode: 'SITE' | 'SALES'; isCurrent: boolean; }
+
+export interface WorkerSalesOutlet {
+  id: string;
+  name: string;
+  code: string | null;
+  address: string | null;
+}
+
+export interface WorkerSalesVisit {
+  id: string;
+  outlet: { id: string; name: string } | null;
+  customerName: string | null;
+  visitedAt: string;
+  note: string | null;
+  visitResult: string | null;
+  followUpRequired: boolean;
+  followUpAt?: string | null;
+  potentialOrderQuantity?: number | null;
+  requestedDiscountPerItem?: number | null;
+  workerStatement: string | null;
+  structuredContext?: Record<string, unknown> | null;
+  needsContext: boolean;
+}
+
+export interface WorkerSalesDay {
+  id: string;
+  status: string;
+  reportDate: string;
+  project: { id: string; name: string };
+  attendance: { checkInAt: string | null; checkOutAt: string | null; status: string };
+  workerSummary: string | null;
+  additionalNote: string | null;
+  submittedAt: string | null;
+  visits: WorkerSalesVisit[];
+}
+
+export const createOutletSchema = z.object({
+  projectId: z.string().min(1),
+  code: z.string().trim().max(50).optional(),
+  name: z.string().trim().min(1).max(120),
+  contactName: z.string().trim().max(120).optional(),
+  phone: z.string().trim().max(30).optional(),
+  address: z.string().trim().max(500).optional(),
+  latitude: z.number().finite().min(-90).max(90).optional(),
+  longitude: z.number().finite().min(-180).max(180).optional(),
+}).strict();
+
+export const updateOutletSchema = createOutletSchema.partial().extend({
+  status: z.enum(['ACTIVE', 'INACTIVE', 'ARCHIVED']).optional(),
+}).strict();
+
+export const updateSalesVisitContextSchema = z.object({
+  workerStatement: z.string().trim().min(1).max(2_000),
+  visitResult: z.string().trim().max(500).optional(),
+  followUpRequired: z.boolean().optional(),
+  followUpAt: z.string().datetime({ offset: true }).optional(),
+  potentialOrderQuantity: z.number().int().positive().max(1_000_000).optional(),
+  requestedDiscountPerItem: z.number().nonnegative().max(1_000_000).optional(),
+}).strict();
+
+export const updateDailySalesReportSchema = z.object({
+  workerSummary: z.string().trim().max(4_000).optional(),
+  additionalNote: z.string().trim().max(4_000).optional(),
+}).strict();
+
+export type CreateOutletInput = z.infer<typeof createOutletSchema>;
+export type UpdateOutletInput = z.infer<typeof updateOutletSchema>;
+export type UpdateSalesVisitContextInput = z.infer<typeof updateSalesVisitContextSchema>;
+export type UpdateDailySalesReportInput = z.infer<typeof updateDailySalesReportSchema>;
 
 // Attendance Action (Check-in / Check-out) Response
 export const attendanceActionResponseSchema = z.object({
@@ -333,6 +445,14 @@ export type EmployeePerformanceAnalytics = z.infer<typeof employeePerformanceAna
 export const adminLoginSchema = z.object({
   email: z.string().email().max(100),
   orgSlug: z.string().min(1).max(100),
+  password: z.string().min(12).max(128),
+}).strict();
+
+export const adminRegistrationSchema = z.object({
+  organizationName: z.string().trim().min(2).max(120),
+  orgSlug: z.string().trim().toLowerCase().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).min(2).max(60),
+  email: z.string().trim().toLowerCase().email().max(100),
+  password: z.string().min(12).max(128),
 }).strict();
 
 export const adminSessionResponseSchema = z.object({
@@ -351,6 +471,7 @@ export const adminSessionResponseSchema = z.object({
 }).strict();
 
 export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
+export type AdminRegistrationInput = z.infer<typeof adminRegistrationSchema>;
 export type AdminSessionResponse = z.infer<typeof adminSessionResponseSchema>;
 
 // Admin Workforce & Site Types
@@ -384,6 +505,11 @@ export interface ProjectListItem {
   code: string;
   name: string;
   status: string;
+  workMode: string;
+  telegramChatId: string | null;
+  telegramConnectionStatus: string;
+  telegramHealthCheckedAt: string | null;
+  telegramHealthError: string | null;
   sitesCount: number;
 }
 
@@ -443,6 +569,7 @@ export const createCorrectionSchema = z.object({
   correctedCheckInAt: z.string().datetime({ offset: true }).optional(),
   correctedCheckOutAt: z.string().datetime({ offset: true }).optional(),
   correctedStatus: z.enum(attendanceStatuses).optional(),
+  correctedProjectId: z.string().min(1).optional(),
 }).strict();
 
 export const resolveCorrectionSchema = z.object({
@@ -455,6 +582,8 @@ export const attendanceExportQuerySchema = z.object({
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   siteId: z.string().optional(),
   projectId: z.string().optional(),
+  employeeId: z.string().optional(),
+  exceptionsOnly: z.coerce.boolean().optional(),
   format: z.enum(['csv', 'json']).default('json'),
 });
 
@@ -478,6 +607,8 @@ export interface AttendanceCorrectionItem {
   correctedCheckInAt: string | null;
   correctedCheckOutAt: string | null;
   correctedStatus: AttendanceStatus | null;
+  originalProjectId: string | null;
+  correctedProjectId: string | null;
   requestedByUserId: string | null;
   approvedByUserId: string | null;
   createdAt: string;
@@ -742,6 +873,16 @@ export interface RegistrationRequestListItem {
   updatedAt: string;
 }
 
-
-
-
+export const updateTelegramReportGroupSchema = z.object({
+  targetType: z.enum(['SITE', 'WORKER_GROUP', 'NONE']),
+  targetId: z.string().min(1).optional(),
+  enabled: z.boolean(),
+}).strict().superRefine((value, ctx) => {
+  if (value.targetType !== 'NONE' && !value.targetId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetId'], message: 'TARGET_REQUIRED' });
+  if (value.targetType === 'NONE' && value.enabled) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['enabled'], message: 'TARGET_REQUIRED_TO_ENABLE' });
+});
+export type UpdateTelegramReportGroupInput = z.infer<typeof updateTelegramReportGroupSchema>;
+export interface TelegramReportGroupListItem {
+  id: string; title: string | null; status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED'; connectedAt: string;
+  targetType: 'SITE' | 'WORKER_GROUP' | null; targetId: string | null; targetName: string | null;
+}
